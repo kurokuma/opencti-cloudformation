@@ -62,8 +62,6 @@ $CORE_STACK = "opencti-core"
 $PROJECT    = "opencti"
 ```
 
-所要時間の目安は、コアスタックのCREATEで**25〜40分程度**（OpenSearch・ElastiCache・Amazon MQのプロビジョニングが支配的）です。
-
 ## 0. 前提ツールと権限
 
 ### 0.1 ローカル端末に必要なツール
@@ -105,14 +103,15 @@ IAM Roleを作成するため、`deploy`時に`--capabilities CAPABILITY_IAM`が
 
 ### 0.4 OpenSearchのサービスリンクロール（アカウントで初回のみ・必須）
 
-**VPC内にOpenSearchドメインを作成するには、アカウントに`AWSServiceRoleForAmazonOpenSearchService`が存在している必要があります。** 未作成のままデプロイすると、OpenSearchドメイン作成時に次のエラーでスタックがロールバックする
+**VPC内にOpenSearchドメインを作成するには、アカウントに`AWSServiceRoleForAmazonOpenSearchService`が存在している必要がある
+** 未作成のままデプロイすると、OpenSearchドメイン作成時に次のエラーでスタックがロールバックする
 
 ```text
 Before you can proceed, you must enable a service-linked role to give
 Amazon OpenSearch Service permissions to access your VPC.
 ```
 
-このロールはドメイン初回作成時に自動生成される仕様ですが、**その「初回」の作成自体は上記エラーで失敗することがあります**（SLRの生成とドメイン作成が同一リクエスト内で競合するため）。つまり1回目は失敗し、SLRだけが残る、という挙動になり得ます。事故を避けるため、**デプロイ前に明示的に作成しておくのが確実**
+このロールはドメイン初回作成時に自動生成される仕様だが、**その「初回」の作成自体は上記エラーで失敗することがある**（SLRの生成とドメイン作成が同一リクエスト内で競合するため）。つまり1回目は失敗し、SLRだけが残る、という挙動になり得ます。事故を避けるため、**デプロイ前に明示的に作成しておくのが確実**
 
 まず存在と作成日時を確認する（IAMはグローバルなためリージョン指定不要。アカウントに1つあれば全リージョンで有効）
 
@@ -126,7 +125,7 @@ aws iam get-role --role-name AWSServiceRoleForAmazonOpenSearchService --query 'R
 aws iam create-service-linked-role --aws-service-name opensearchservice.amazonaws.com
 ```
 
-すでに存在する場合は`has been taken in this account`が返ります。エラー表示ですが**問題なし**（作成済みという意味）。
+すでに存在する場合は`has been taken in this account`が返る。エラー表示だが**問題なし**（作成済みという意味）。
 
 
 ## 1. リージョン可用性の事前確認
