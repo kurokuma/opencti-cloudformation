@@ -22,7 +22,7 @@ QinetiQ Cyber Intelligenceの[OpenCTI-Terraform](https://github.com/QinetiQ-Cybe
 | `opencti-connector.yaml` | Connectorを1個ずつECS Fargate Serviceとして追加 |
 | `example-import-file-stix.env` | ImportFileStix Connector用の環境変数例 |
 | `exmaple/example-stix-bundle.json` | 取り込み動作を検証するための最小STIX 2.1バンドル |
-| `parameters.example.json` | コアスタックのパラメータ雛形（参照用・コミット対象） |
+| `parameters.example.json` | コアスタックのパラメータ雛形 |
 
 ## Terraform版から変更した点
 
