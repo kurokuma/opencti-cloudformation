@@ -346,7 +346,7 @@ aws cloudformation describe-stack-events `
 
 ## 4. デプロイ状態の確認と切り分け
 
-CREATE_COMPLETE後、OpenCTI Platformが実際に起動したかを確認します。
+CREATE_COMPLETE後、OpenCTI Platformが実際に起動したかを確認
 
 ### 4.1 スタック状態と出力値
 
