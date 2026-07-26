@@ -1,0 +1,257 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Deploy one OpenCTI connector as a private ECS Fargate service into an existing
+  opencti-core.yaml stack. Connector-specific variables are loaded from an ECS
+  S3 environment file. OPENCTI_TOKEN is injected from Secrets Manager.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Core stack integration
+        Parameters:
+          - CoreStackName
+          - ConnectorTokenSecretArn
+          - ConnectorTokenJsonKey
+          - ConnectorEnvironmentFileArn
+      - Label:
+          default: Connector
+        Parameters:
+          - ConnectorName
+          - ConnectorImage
+          - ConnectorId
+          - ConnectorType
+          - ConnectorDisplayName
+          - ConnectorScope
+          - ConnectorLogLevel
+          - ConnectorCpu
+          - ConnectorMemory
+          - DesiredCount
+          - LogRetentionDays
+
+Parameters:
+  CoreStackName:
+    Type: String
+    Default: opencti-core
+    Description: Name of the stack created from opencti-core.yaml.
+
+  ConnectorName:
+    Type: String
+    MinLength: 2
+    MaxLength: 32
+    AllowedPattern: '^[a-z][a-z0-9-]*[a-z0-9]$'
+    Description: Resource-safe name such as import-file-stix or mitre.
+
+  ConnectorImage:
+    Type: String
+    Description: Full connector image, preferably pinned or mirrored to ECR.
+
+  ConnectorId:
+    Type: String
+    AllowedPattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+    ConstraintDescription: Must be a valid UUIDv4 and remain stable across redeployments.
+
+  ConnectorType:
+    Type: String
+    AllowedValues:
+      - EXTERNAL_IMPORT
+      - INTERNAL_ENRICHMENT
+      - INTERNAL_IMPORT_FILE
+      - INTERNAL_EXPORT_FILE
+      - INTERNAL_ANALYSIS
+      - STREAM
+
+  ConnectorDisplayName:
+    Type: String
+
+  ConnectorScope:
+    Type: String
+    Default: '*'
+
+  ConnectorLogLevel:
+    Type: String
+    Default: info
+    AllowedValues: [debug, info, warning, error]
+
+  ConnectorTokenSecretArn:
+    Type: String
+    Description: Secrets Manager ARN containing the dedicated OpenCTI connector user's token.
+
+  ConnectorTokenJsonKey:
+    Type: String
+    Default: token
+    AllowedPattern: '^[A-Za-z0-9_.-]+$'
+
+  ConnectorEnvironmentFileArn:
+    Type: String
+    Description: >-
+      S3 object ARN for a UTF-8 .env file containing connector-specific variables.
+      Do not put OPENCTI_TOKEN in this file.
+
+  ConnectorCpu:
+    Type: Number
+    Default: 512
+    AllowedValues: [256, 512, 1024, 2048, 4096]
+
+  ConnectorMemory:
+    Type: Number
+    Default: 1024
+    Description: Fargate task memory in MiB.
+
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 1
+
+  LogRetentionDays:
+    Type: Number
+    Default: 90
+    AllowedValues: [7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653]
+
+Resources:
+  ConnectorLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/ecs/opencti/connectors/${ConnectorName}'
+      RetentionInDays: !Ref LogRetentionDays
+
+  ConnectorExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ConnectorBootstrap
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ReadConnectorToken
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref ConnectorTokenSecretArn
+              - Sid: ReadEnvironmentFile
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                Resource: !Ref ConnectorEnvironmentFileArn
+              - Sid: LocateEnvironmentFileBucket
+                Effect: Allow
+                Action: s3:GetBucketLocation
+                Resource: !Select [0, !Split ['/', !Ref ConnectorEnvironmentFileArn]]
+
+  ConnectorTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EcsExecChannels
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: '*'
+
+  ConnectorTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub 'opencti-connector-${ConnectorName}'
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref ConnectorCpu
+      Memory: !Ref ConnectorMemory
+      ExecutionRoleArn: !GetAtt ConnectorExecutionRole.Arn
+      TaskRoleArn: !GetAtt ConnectorTaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: !Sub 'connector-${ConnectorName}'
+          Image: !Ref ConnectorImage
+          Essential: true
+          Environment:
+            - Name: OPENCTI_URL
+              Value:
+                Fn::ImportValue:
+                  Fn::Sub: '${CoreStackName}-OpenCTIInternalUrl'
+            - Name: CONNECTOR_ID
+              Value: !Ref ConnectorId
+            - Name: CONNECTOR_TYPE
+              Value: !Ref ConnectorType
+            - Name: CONNECTOR_NAME
+              Value: !Ref ConnectorDisplayName
+            - Name: CONNECTOR_SCOPE
+              Value: !Ref ConnectorScope
+            - Name: CONNECTOR_LOG_LEVEL
+              Value: !Ref ConnectorLogLevel
+          EnvironmentFiles:
+            - Type: s3
+              Value: !Ref ConnectorEnvironmentFileArn
+          Secrets:
+            - Name: OPENCTI_TOKEN
+              ValueFrom: !Sub '${ConnectorTokenSecretArn}:${ConnectorTokenJsonKey}::'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref ConnectorLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref ConnectorName
+
+  ConnectorService:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub 'opencti-connector-${ConnectorName}'
+      Cluster:
+        Fn::ImportValue:
+          Fn::Sub: '${CoreStackName}-EcsClusterArn'
+      TaskDefinition: !Ref ConnectorTaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - Fn::ImportValue:
+                Fn::Sub: '${CoreStackName}-AppSubnetId'
+          SecurityGroups:
+            - Fn::ImportValue:
+                Fn::Sub: '${CoreStackName}-AppSecurityGroupId'
+      Tags:
+        - Key: Name
+          Value: !Sub 'opencti-connector-${ConnectorName}'
+
+Outputs:
+  ConnectorServiceName:
+    Value: !GetAtt ConnectorService.Name
+
+  ConnectorLogGroupName:
+    Value: !Ref ConnectorLogGroup
