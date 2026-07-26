@@ -103,8 +103,8 @@ IAM Roleを作成するため、`deploy`時に`--capabilities CAPABILITY_IAM`が
 
 ### 0.4 OpenSearchのサービスリンクロール（アカウントで初回のみ・必須）
 
-**VPC内にOpenSearchドメインを作成するには、アカウントに`AWSServiceRoleForAmazonOpenSearchService`が存在している必要がある
-** 未作成のままデプロイすると、OpenSearchドメイン作成時に次のエラーでスタックがロールバックする
+**VPC内にOpenSearchドメインを作成するには、アカウントに`AWSServiceRoleForAmazonOpenSearchService`が存在している必要がある**
+未作成のままデプロイすると、OpenSearchドメイン作成時に次のエラーでスタックがロールバックする
 
 ```text
 Before you can proceed, you must enable a service-linked role to give
