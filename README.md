@@ -111,8 +111,6 @@ Before you can proceed, you must enable a service-linked role to give
 Amazon OpenSearch Service permissions to access your VPC.
 ```
 
-このロールはドメイン初回作成時に自動生成される仕様だが、**その「初回」の作成自体は上記エラーで失敗することがある**（SLRの生成とドメイン作成が同一リクエスト内で競合するため）。つまり1回目は失敗し、SLRだけが残る、という挙動になり得ます。事故を避けるため、**デプロイ前に明示的に作成しておくのが確実**
-
 まず存在と作成日時を確認する（IAMはグローバルなためリージョン指定不要。アカウントに1つあれば全リージョンで有効）
 
 ```powershell
