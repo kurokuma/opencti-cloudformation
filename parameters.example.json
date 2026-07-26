@@ -1,0 +1,22 @@
+[
+  {
+    "ParameterKey": "ProjectName",
+    "ParameterValue": "opencti"
+  },
+  {
+    "ParameterKey": "OpenCTIAdminEmail",
+    "ParameterValue": "admin@example.com"
+  },
+  {
+    "ParameterKey": "OpenCTIAdminToken",
+    "ParameterValue": "REPLACE-WITH-UUID-V4"
+  },
+  {
+    "ParameterKey": "OpenCTIPlatformImage",
+    "ParameterValue": "opencti/platform:latest"
+  },
+  {
+    "ParameterKey": "OpenCTIWorkerImage",
+    "ParameterValue": "opencti/worker:latest"
+  }
+]
