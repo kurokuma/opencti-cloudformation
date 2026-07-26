@@ -1,0 +1,1163 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Single-AZ OpenCTI deployment on AWS. All workloads are private and have no
+  public IP. Administrator access is provided through an SSM relay instance and
+  Session Manager remote-host port forwarding. Outbound Internet access uses one
+  NAT Gateway. OpenCTI runs on ECS Fargate with Amazon OpenSearch Service,
+  ElastiCache for Redis, Amazon MQ for RabbitMQ and Amazon S3.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: General
+        Parameters:
+          - ProjectName
+          - OpenCTIAdminEmail
+          - OpenCTIAdminToken
+          - OpenCTIBaseUrl
+          - LogRetentionDays
+      - Label:
+          default: Container images and sizing
+        Parameters:
+          - OpenCTIPlatformImage
+          - OpenCTIWorkerImage
+          - OpenCTIPlatformCpu
+          - OpenCTIPlatformMemory
+          - NodeMaxOldSpaceSize
+          - OpenCTIWorkerCpu
+          - OpenCTIWorkerMemory
+          - OpenCTIWorkerDesiredCount
+      - Label:
+          default: Managed dependencies
+        Parameters:
+          - OpenSearchEngineVersion
+          - OpenSearchInstanceType
+          - OpenSearchVolumeSize
+          - OpenSearchVolumeIops
+          - OpenSearchVolumeThroughput
+          - RedisNodeType
+          - RabbitMQEngineVersion
+          - RabbitMQInstanceType
+      - Label:
+          default: Networking and SSM relay
+        Parameters:
+          - VpcCidr
+          - PublicSubnetCidr
+          - AppSubnetCidr
+          - DataSubnetCidr
+          - SSMRelayInstanceType
+          - SSMRelayAmiId
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: opencti
+    MinLength: 3
+    MaxLength: 15
+    AllowedPattern: '^[a-z][a-z0-9-]*[a-z0-9]$'
+    Description: Lowercase prefix used for resource names.
+
+  OpenCTIAdminEmail:
+    Type: String
+    Default: admin@example.invalid
+    Description: Initial local OpenCTI administrator email address.
+
+  OpenCTIAdminToken:
+    Type: String
+    NoEcho: true
+    AllowedPattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+    ConstraintDescription: Must be a valid UUIDv4.
+    Description: Generate with python -c "import uuid; print(uuid.uuid4())".
+
+  OpenCTIBaseUrl:
+    Type: String
+    Default: http://localhost:4000
+    Description: Browser-facing URL while using SSM port forwarding.
+
+  OpenCTIPlatformImage:
+    Type: String
+    Default: opencti/platform:latest
+    Description: Pin a tested version or use an ECR image URI for production.
+
+  OpenCTIWorkerImage:
+    Type: String
+    Default: opencti/worker:latest
+    Description: Pin the same tested OpenCTI version as the platform.
+
+  OpenCTIPlatformCpu:
+    Type: Number
+    Default: 2048
+    AllowedValues: [1024, 2048, 4096, 8192, 16384]
+
+  OpenCTIPlatformMemory:
+    Type: Number
+    Default: 16384
+    Description: Fargate task memory in MiB. Must be valid for the selected CPU.
+
+  NodeMaxOldSpaceSize:
+    Type: Number
+    Default: 12288
+    Description: Node.js heap limit in MiB; keep below task memory.
+
+  OpenCTIWorkerCpu:
+    Type: Number
+    Default: 1024
+    AllowedValues: [256, 512, 1024, 2048, 4096]
+
+  OpenCTIWorkerMemory:
+    Type: Number
+    Default: 2048
+    Description: Fargate task memory in MiB.
+
+  OpenCTIWorkerDesiredCount:
+    Type: Number
+    Default: 2
+    MinValue: 1
+    MaxValue: 3
+
+  OpenSearchEngineVersion:
+    Type: String
+    Default: OpenSearch_2.17
+    Description: Confirm current regional availability and OpenCTI compatibility before deployment.
+
+  OpenSearchInstanceType:
+    Type: String
+    Default: r7g.large.search
+
+  OpenSearchVolumeSize:
+    Type: Number
+    Default: 300
+    MinValue: 100
+    MaxValue: 3072
+
+  OpenSearchVolumeIops:
+    Type: Number
+    Default: 3000
+    MinValue: 3000
+    MaxValue: 16000
+    Description: gp3 IOPS for the OpenSearch data volume.
+
+  OpenSearchVolumeThroughput:
+    Type: Number
+    Default: 250
+    MinValue: 250
+    MaxValue: 1250
+    Description: >-
+      gp3 throughput in MiB/s. OpenSearch requires 250-1250, which differs from
+      the EC2 EBS gp3 minimum of 125.
+
+  RedisNodeType:
+    Type: String
+    Default: cache.r7g.large
+
+  RabbitMQEngineVersion:
+    Type: String
+    Default: '3.13'
+    Description: Amazon MQ also supports newer versions; use a version validated with OpenCTI.
+
+  RabbitMQInstanceType:
+    Type: String
+    Default: mq.m7g.medium
+
+  LogRetentionDays:
+    Type: Number
+    Default: 90
+    AllowedValues: [7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653]
+
+  VpcCidr:
+    Type: String
+    Default: 10.20.0.0/16
+
+  PublicSubnetCidr:
+    Type: String
+    Default: 10.20.0.0/24
+    Description: Contains only the NAT Gateway. MapPublicIpOnLaunch remains disabled.
+
+  AppSubnetCidr:
+    Type: String
+    Default: 10.20.10.0/24
+
+  DataSubnetCidr:
+    Type: String
+    Default: 10.20.20.0/24
+
+  SSMRelayInstanceType:
+    Type: String
+    Default: t4g.micro
+
+  SSMRelayAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-vpc'
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-igw'
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PublicSubnetCidr
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-nat'
+
+  AppSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref AppSubnetCidr
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-app'
+
+  DataSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref DataSubnetCidr
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-data'
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-rt'
+
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+
+  NatEip:
+    Type: AWS::EC2::EIP
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-nat-eip'
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-nat'
+
+  AppRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-app-rt'
+
+  AppDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref AppRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  AppRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref AppRouteTable
+      SubnetId: !Ref AppSubnet
+
+  DataRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-data-rt'
+
+  DataRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref DataRouteTable
+      SubnetId: !Ref DataSubnet
+
+  S3GatewayEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref Vpc
+      VpcEndpointType: Gateway
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      RouteTableIds:
+        - !Ref AppRouteTable
+        - !Ref DataRouteTable
+
+  SSMRelaySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: No-inbound security group for the SSM relay.
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ssm-relay-sg'
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: OpenCTI ECS platform, worker and connector tasks.
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: '-1'
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-app-sg'
+
+  AppIngressFromRelay:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AppSecurityGroup
+      IpProtocol: tcp
+      FromPort: 4000
+      ToPort: 4000
+      SourceSecurityGroupId: !Ref SSMRelaySecurityGroup
+      Description: SSM relay to OpenCTI UI and GraphQL API.
+
+  AppIngressSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref AppSecurityGroup
+      IpProtocol: tcp
+      FromPort: 4000
+      ToPort: 4000
+      SourceSecurityGroupId: !Ref AppSecurityGroup
+      Description: Workers and connectors to the OpenCTI platform.
+
+  OpenSearchSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: OpenSearch access from OpenCTI tasks only.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-opensearch-sg'
+
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Redis TLS access from OpenCTI tasks only.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-redis-sg'
+
+  RabbitMQSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Amazon MQ AMQPS and management API access from OpenCTI tasks only.
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5671
+          ToPort: 5671
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+          Description: AMQPS messaging from OpenCTI tasks.
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+          Description: RabbitMQ management HTTP API (Amazon MQ uses 443/HTTPS).
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-rabbitmq-sg'
+
+  SSMRelayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: ReadCloudMapDns
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - servicediscovery:DiscoverInstances
+                Resource: '*'
+
+  SSMRelayInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref SSMRelayRole
+
+  SSMRelayInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref SSMRelayAmiId
+      InstanceType: !Ref SSMRelayInstanceType
+      IamInstanceProfile: !Ref SSMRelayInstanceProfile
+      SubnetId: !Ref AppSubnet
+      SecurityGroupIds:
+        - !Ref SSMRelaySecurityGroup
+      SourceDestCheck: true
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: required
+        HttpPutResponseHopLimit: 1
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            Encrypted: true
+            VolumeSize: 8
+            VolumeType: gp3
+            DeleteOnTermination: true
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -euxo pipefail
+          systemctl enable --now amazon-ssm-agent
+          dnf -y update-minimal --security || true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ssm-relay'
+
+  LiveBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: AbortIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+          - Id: ExpireNoncurrentVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 90
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-live'
+
+  LiveBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref LiveBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt LiveBucket.Arn
+              - !Sub '${LiveBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  ArchiveBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveLifecycle
+            Status: Enabled
+            Transitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+              - StorageClass: DEEP_ARCHIVE
+                TransitionInDays: 365
+            NoncurrentVersionTransitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+              - StorageClass: DEEP_ARCHIVE
+                TransitionInDays: 365
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-archive'
+
+  ArchiveBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArchiveBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt ArchiveBucket.Arn
+              - !Sub '${ArchiveBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
+  OpenCTIAdminSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Initial OpenCTI local administrator credentials and API token.
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"email":"${OpenCTIAdminEmail}","token":"${OpenCTIAdminToken}"}'
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludePunctuation: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-admin'
+
+  OpenCTIEncryptionSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: OpenCTI APP__ENCRYPTION_KEY. Preserve this secret for the life of the platform.
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: encryptionKey
+        PasswordLength: 44
+        ExcludePunctuation: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-encryption-key'
+
+  OpenCTIHealthSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: OpenCTI health endpoint access key.
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: healthKey
+        PasswordLength: 32
+        ExcludePunctuation: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-health-key'
+
+  RedisSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: ElastiCache Redis authentication token.
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: password
+        PasswordLength: 64
+        ExcludePunctuation: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-redis-auth'
+
+  RabbitMQSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Amazon MQ RabbitMQ administrative user.
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"opencti"}'
+        GenerateStringKey: password
+        PasswordLength: 32
+        ExcludePunctuation: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-rabbitmq-auth'
+
+  OpenSearchDomain:
+    Type: AWS::OpenSearchService::Domain
+    Properties:
+      DomainName: !Sub '${ProjectName}-os'
+      EngineVersion: !Ref OpenSearchEngineVersion
+      ClusterConfig:
+        DedicatedMasterEnabled: false
+        InstanceCount: 1
+        InstanceType: !Ref OpenSearchInstanceType
+        ZoneAwarenessEnabled: false
+      EBSOptions:
+        EBSEnabled: true
+        VolumeType: gp3
+        VolumeSize: !Ref OpenSearchVolumeSize
+        Iops: !Ref OpenSearchVolumeIops
+        Throughput: !Ref OpenSearchVolumeThroughput
+      EncryptionAtRestOptions:
+        Enabled: true
+      NodeToNodeEncryptionOptions:
+        Enabled: true
+      DomainEndpointOptions:
+        EnforceHTTPS: true
+        TLSSecurityPolicy: Policy-Min-TLS-1-2-2019-07
+      VPCOptions:
+        SubnetIds:
+          - !Ref DataSubnet
+        SecurityGroupIds:
+          - !Ref OpenSearchSecurityGroup
+      AccessPolicies:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !GetAtt OpenCTITaskRole.Arn
+            Action: es:ESHttp*
+            Resource: !Sub 'arn:${AWS::Partition}:es:${AWS::Region}:${AWS::AccountId}:domain/${ProjectName}-os/*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-opensearch'
+
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: !Sub '${ProjectName} Redis subnet group'
+      SubnetIds:
+        - !Ref DataSubnet
+
+  RedisParameterGroup:
+    Type: AWS::ElastiCache::ParameterGroup
+    Properties:
+      CacheParameterGroupFamily: redis7
+      Description: !Sub '${ProjectName} OpenCTI Redis parameters'
+      Properties:
+        maxmemory-policy: noeviction
+
+  RedisReplicationGroup:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      ReplicationGroupDescription: !Sub '${ProjectName} OpenCTI Redis'
+      Engine: redis
+      EngineVersion: '7.1'
+      CacheNodeType: !Ref RedisNodeType
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      CacheParameterGroupName: !Ref RedisParameterGroup
+      SecurityGroupIds:
+        - !Ref RedisSecurityGroup
+      NumCacheClusters: 1
+      AutomaticFailoverEnabled: false
+      MultiAZEnabled: false
+      AtRestEncryptionEnabled: true
+      TransitEncryptionEnabled: true
+      AuthToken: !Sub '{{resolve:secretsmanager:${RedisSecret}:SecretString:password}}'
+      SnapshotRetentionLimit: 7
+      SnapshotWindow: 18:00-19:00
+      PreferredMaintenanceWindow: sun:19:00-sun:20:00
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-redis'
+
+  RabbitMQBroker:
+    Type: AWS::AmazonMQ::Broker
+    Properties:
+      BrokerName: !Sub '${ProjectName}-rabbitmq'
+      DeploymentMode: SINGLE_INSTANCE
+      EngineType: RABBITMQ
+      EngineVersion: !Ref RabbitMQEngineVersion
+      HostInstanceType: !Ref RabbitMQInstanceType
+      AutoMinorVersionUpgrade: true
+      PubliclyAccessible: false
+      SubnetIds:
+        - !Ref DataSubnet
+      SecurityGroups:
+        - !Ref RabbitMQSecurityGroup
+      EncryptionOptions:
+        UseAwsOwnedKey: true
+      Logs:
+        General: true
+      MaintenanceWindowStartTime:
+        DayOfWeek: Sunday
+        TimeOfDay: '20:00'
+        TimeZone: UTC
+      Users:
+        - Username: !Sub '{{resolve:secretsmanager:${RabbitMQSecret}:SecretString:username}}'
+          Password: !Sub '{{resolve:secretsmanager:${RabbitMQSecret}:SecretString:password}}'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-rabbitmq'
+
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${ProjectName}-cluster'
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-cluster'
+
+  PrivateDnsNamespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: opencti.local
+      Vpc: !Ref Vpc
+      Description: Private DNS namespace for OpenCTI ECS services.
+
+  PlatformDiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: platform
+      NamespaceId: !Ref PrivateDnsNamespace
+      DnsConfig:
+        RoutingPolicy: MULTIVALUE
+        DnsRecords:
+          - Type: A
+            TTL: 10
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+
+  PlatformLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/ecs/${ProjectName}/platform'
+      RetentionInDays: !Ref LogRetentionDays
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      LogGroupName: !Sub '/ecs/${ProjectName}/worker'
+      RetentionInDays: !Ref LogRetentionDays
+
+  ECSExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ReadOpenCTISecrets
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref OpenCTIAdminSecret
+                  - !Ref OpenCTIEncryptionSecret
+                  - !Ref OpenCTIHealthSecret
+                  - !Ref RedisSecret
+                  - !Ref RabbitMQSecret
+
+  OpenCTITaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: OpenCTIAwsAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: LiveBucketList
+                Effect: Allow
+                Action:
+                  - s3:GetBucketLocation
+                  - s3:ListBucket
+                  - s3:ListBucketMultipartUploads
+                Resource: !GetAtt LiveBucket.Arn
+              - Sid: LiveBucketObjects
+                Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:AbortMultipartUpload
+                  - s3:ListMultipartUploadParts
+                Resource: !Sub '${LiveBucket.Arn}/*'
+              - Sid: OpenSearchHttp
+                Effect: Allow
+                Action:
+                  - es:ESHttpDelete
+                  - es:ESHttpGet
+                  - es:ESHttpHead
+                  - es:ESHttpPatch
+                  - es:ESHttpPost
+                  - es:ESHttpPut
+                Resource: !Sub 'arn:${AWS::Partition}:es:${AWS::Region}:${AWS::AccountId}:domain/${ProjectName}-os/*'
+              - Sid: EcsExecChannels
+                Effect: Allow
+                Action:
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: '*'
+
+  PlatformTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-platform'
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref OpenCTIPlatformCpu
+      Memory: !Ref OpenCTIPlatformMemory
+      ExecutionRoleArn: !GetAtt ECSExecutionRole.Arn
+      TaskRoleArn: !GetAtt OpenCTITaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: platform
+          Image: !Ref OpenCTIPlatformImage
+          Essential: true
+          PortMappings:
+            - ContainerPort: 4000
+              HostPort: 4000
+              Protocol: tcp
+          Environment:
+            - Name: APP__PORT
+              Value: '4000'
+            - Name: APP__BASE_URL
+              Value: !Ref OpenCTIBaseUrl
+            - Name: APP__ADMIN__EMAIL
+              Value: !Ref OpenCTIAdminEmail
+            - Name: APP__APP_LOGS__LOGS_LEVEL
+              Value: info
+            - Name: APP__APP_LOGS__LOGS_FILES
+              Value: 'false'
+            - Name: APP__APP_LOGS__LOGS_CONSOLE
+              Value: 'true'
+            - Name: APP__AUDIT_LOGS__LOGS_FILES
+              Value: 'false'
+            - Name: APP__AUDIT_LOGS__LOGS_CONSOLE
+              Value: 'true'
+            - Name: NODE_OPTIONS
+              Value: !Sub '--max-old-space-size=${NodeMaxOldSpaceSize}'
+            - Name: REDIS__MODE
+              Value: single
+            - Name: REDIS__HOSTNAME
+              Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address
+            - Name: REDIS__PORT
+              Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Port
+            - Name: REDIS__USE_SSL
+              Value: 'true'
+            - Name: REDIS__TRIMMING
+              Value: '2000000'
+            - Name: ELASTICSEARCH__ENGINE_SELECTOR
+              Value: opensearch
+            - Name: ELASTICSEARCH__URL
+              Value: !Sub 'https://${OpenSearchDomain.DomainEndpoint}'
+            - Name: OPENSEARCH__REGION
+              Value: !Ref AWS::Region
+            - Name: ELASTICSEARCH__SSL__REJECT_UNAUTHORIZED
+              Value: 'true'
+            - Name: ELASTICSEARCH__NUMBER_OF_SHARDS
+              Value: '1'
+            - Name: ELASTICSEARCH__NUMBER_OF_REPLICAS
+              Value: '0'
+            - Name: MINIO__ENDPOINT
+              Value: !Sub 's3.${AWS::Region}.amazonaws.com'
+            - Name: MINIO__PORT
+              Value: '443'
+            - Name: MINIO__USE_SSL
+              Value: 'true'
+            - Name: MINIO__BUCKET_NAME
+              Value: !Ref LiveBucket
+            - Name: MINIO__BUCKET_REGION
+              Value: !Ref AWS::Region
+            - Name: MINIO__USE_AWS_ROLE
+              Value: 'true'
+            - Name: RABBITMQ__HOSTNAME
+              Value:
+                Fn::Select:
+                  - 0
+                  - Fn::Split:
+                      - ':'
+                      - Fn::Select:
+                          - 1
+                          - Fn::Split:
+                              - '//'
+                              - Fn::Select:
+                                  - 0
+                                  - Fn::GetAtt:
+                                      - RabbitMQBroker
+                                      - AmqpEndpoints
+            - Name: RABBITMQ__PORT
+              Value: '5671'
+            - Name: RABBITMQ__USE_SSL
+              Value: 'true'
+            - Name: RABBITMQ__SSL_REJECT_UNAUTHORIZED
+              Value: 'true'
+            - Name: RABBITMQ__PORT_MANAGEMENT
+              Value: '443'
+            - Name: RABBITMQ__MANAGEMENT_SSL
+              Value: 'true'
+            - Name: RABBITMQ__QUEUE_TYPE
+              Value: classic
+          Secrets:
+            - Name: APP__ADMIN__PASSWORD
+              ValueFrom: !Sub '${OpenCTIAdminSecret}:password::'
+            - Name: APP__ADMIN__TOKEN
+              ValueFrom: !Sub '${OpenCTIAdminSecret}:token::'
+            - Name: APP__ENCRYPTION_KEY
+              ValueFrom: !Sub '${OpenCTIEncryptionSecret}:encryptionKey::'
+            - Name: APP__HEALTH_ACCESS_KEY
+              ValueFrom: !Sub '${OpenCTIHealthSecret}:healthKey::'
+            - Name: REDIS__PASSWORD
+              ValueFrom: !Sub '${RedisSecret}:password::'
+            - Name: RABBITMQ__USERNAME
+              ValueFrom: !Sub '${RabbitMQSecret}:username::'
+            - Name: RABBITMQ__PASSWORD
+              ValueFrom: !Sub '${RabbitMQSecret}:password::'
+          HealthCheck:
+            Command:
+              - CMD-SHELL
+              - 'wget -qO- "http://localhost:4000/health?health_access_key=$APP__HEALTH_ACCESS_KEY" >/dev/null || exit 1'
+            Interval: 30
+            Timeout: 10
+            Retries: 10
+            StartPeriod: 300
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref PlatformLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: platform
+
+  PlatformService:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - AppIngressSelf
+      - AppIngressFromRelay
+    Properties:
+      ServiceName: !Sub '${ProjectName}-platform'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref PlatformTaskDefinition
+      DesiredCount: 1
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !Ref AppSubnet
+          SecurityGroups:
+            - !Ref AppSecurityGroup
+      ServiceRegistries:
+        - RegistryArn: !GetAtt PlatformDiscoveryService.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-platform'
+
+  WorkerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-worker'
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: !Ref OpenCTIWorkerCpu
+      Memory: !Ref OpenCTIWorkerMemory
+      ExecutionRoleArn: !GetAtt ECSExecutionRole.Arn
+      TaskRoleArn: !GetAtt OpenCTITaskRole.Arn
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+      ContainerDefinitions:
+        - Name: worker
+          Image: !Ref OpenCTIWorkerImage
+          Essential: true
+          Environment:
+            - Name: OPENCTI_URL
+              Value: http://platform.opencti.local:4000
+            - Name: WORKER_LOG_LEVEL
+              Value: info
+          Secrets:
+            - Name: OPENCTI_TOKEN
+              ValueFrom: !Sub '${OpenCTIAdminSecret}:token::'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref WorkerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: worker
+
+  WorkerService:
+    Type: AWS::ECS::Service
+    DependsOn: PlatformService
+    Properties:
+      ServiceName: !Sub '${ProjectName}-worker'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref WorkerTaskDefinition
+      DesiredCount: !Ref OpenCTIWorkerDesiredCount
+      LaunchType: FARGATE
+      EnableExecuteCommand: true
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+        DeploymentCircuitBreaker:
+          Enable: true
+          Rollback: true
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets:
+            - !Ref AppSubnet
+          SecurityGroups:
+            - !Ref AppSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-worker'
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export:
+      Name: !Sub '${AWS::StackName}-VpcId'
+
+  AppSubnetId:
+    Value: !Ref AppSubnet
+    Export:
+      Name: !Sub '${AWS::StackName}-AppSubnetId'
+
+  AppSecurityGroupId:
+    Value: !Ref AppSecurityGroup
+    Export:
+      Name: !Sub '${AWS::StackName}-AppSecurityGroupId'
+
+  ECSClusterArn:
+    Value: !GetAtt ECSCluster.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-EcsClusterArn'
+
+  OpenCTIInternalUrl:
+    Value: http://platform.opencti.local:4000
+    Export:
+      Name: !Sub '${AWS::StackName}-OpenCTIInternalUrl'
+
+  SSMRelayInstanceId:
+    Value: !Ref SSMRelayInstance
+    Description: Target instance for Session Manager port forwarding.
+
+  SSMPortForwardCommand:
+    Value: !Sub >-
+      aws ssm start-session --target ${SSMRelayInstance}
+      --document-name AWS-StartPortForwardingSessionToRemoteHost
+      --parameters '{"host":["platform.opencti.local"],"portNumber":["4000"],"localPortNumber":["4000"]}'
+    Description: Run this command, then browse to http://localhost:4000.
+
+  BrowserUrl:
+    Value: http://localhost:4000
+
+  OpenCTIAdminSecretArn:
+    Value: !Ref OpenCTIAdminSecret
+    Description: Secret JSON keys are email, password and token.
+
+  LiveBucketName:
+    Value: !Ref LiveBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-LiveBucketName'
+
+  ArchiveBucketName:
+    Value: !Ref ArchiveBucket
+
+  OpenSearchEndpoint:
+    Value: !GetAtt OpenSearchDomain.DomainEndpoint
