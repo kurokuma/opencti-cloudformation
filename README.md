@@ -234,7 +234,8 @@ aws mq describe-broker-instance-options --engine-type RABBITMQ --host-instance-t
 
 ### OpenSearchインスタンスタイプの可用性
 
-`r7g`系（Graviton3）は**古いリージョンでは提供されていない**ことがあります。バージョンだけでなく**インスタンスタイプ**も必ず確認
+`r7g`系（Graviton3）は**古いリージョンでは提供されていない**ことがある
+バージョンだけでなく**インスタンスタイプ**も必ず確認
 
 ```powershell
 aws opensearch list-instance-type-details --engine-version OpenSearch_2.17 --region $AWS_REGION --query 'InstanceTypeDetails[].InstanceType' --output text
