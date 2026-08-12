@@ -24,6 +24,45 @@ QinetiQ Cyber Intelligenceの[OpenCTI-Terraform](https://github.com/QinetiQ-Cybe
 | `exmaple/example-stix-bundle.json` | 取り込み動作を検証するための最小STIX 2.1バンドル |
 | `parameters.example.json` | コアスタックのパラメータ雛形（参照用・コミット対象） |
 
+## デプロイされるリソースと既定スペック
+
+以下は、パラメータを変更せずに `opencti-core.yaml` と `opencti-connector.yaml` をデプロイした場合の構成です。インスタンスタイプ、タスクサイズ、台数、保持期間はテンプレートの既定値です。`parameters.json` または Connector デプロイ時の `--parameter-overrides` で変更できます。
+
+### Core スタック（`opencti-core.yaml`）
+
+| 分類 | AWS リソース | 数 | 既定スペック / 設定 | 補足 |
+|---|---|---:|---|---|
+| ネットワーク | VPC | 1 | `10.20.0.0/16`、DNS hostnames/support 有効 | 単一 AZ 構成 |
+| ネットワーク | Subnet | 3 | Public: `10.20.0.0/24`、App: `10.20.10.0/24`、Data: `10.20.20.0/24` | Public subnet にも自動 Public IP は割り当てない |
+| ネットワーク | Internet Gateway / NAT Gateway / Elastic IP | 各 1 | NAT Gateway は Public subnet に配置 | App subnet のインターネット向けアウトバウンド通信を中継。時間・処理量課金あり |
+| ネットワーク | Route table / route / association | 各 3 | Public / App / Data subnet ごとに 1 組 | App subnet だけが NAT Gateway へのデフォルトルートを持つ |
+| ネットワーク | S3 Gateway VPC Endpoint | 1 | Gateway 型、App / Data route table に関連付け | S3 通信は NAT Gateway を経由しない |
+| セキュリティ | Security Group | 5 | SSM relay、App、OpenSearch、Redis、RabbitMQ 用 | App への受信は relay と App SG 自身からの TCP 4000 のみ。データサービスも App SG からのみ許可 |
+| 管理アクセス | EC2 SSM relay | 1 | `t4g.micro`、Amazon Linux 2023 ARM64、gp3 8 GiB、EBS 暗号化 | Public IP / inbound rule なし。Session Manager のポートフォワード専用 |
+| コンテナ基盤 | ECS Cluster | 1 | Container Insights 有効 | Fargate 専用。EC2 コンテナインスタンスは作成しない |
+| OpenCTI | ECS Fargate Platform service | 1 task | x86_64 Linux、**2 vCPU / 16 GiB**、`opencti/platform:latest` | App subnet、Public IP 無効。UI / GraphQL は TCP 4000。Node.js ヒープ上限は 12 GiB |
+| OpenCTI | ECS Fargate Worker service | 2 tasks | x86_64 Linux、各 **1 vCPU / 2 GiB**、`opencti/worker:latest` | `OpenCTIWorkerDesiredCount` は 1–3 に変更可。App subnet、Public IP 無効 |
+| サービス検出 | Cloud Map private DNS namespace / service | 各 1 | `opencti.local` / `platform`、A レコード TTL 10 秒 | Worker / Connector は `http://platform.opencti.local:4000` を使用 |
+| 検索 | Amazon OpenSearch Service domain | 1 | OpenSearch `2.17`、**`r7g.large.search` × 1**、gp3 **300 GiB / 3,000 IOPS / 250 MiB/s** | Data subnet。専用マスター・Zone awareness なし、保存時/通信時暗号化、HTTPS/TLS 1.2、IAM SigV4 認可 |
+| キャッシュ | ElastiCache for Redis ReplicationGroup | 1 node | Redis `7.1`、**`cache.r7g.large` × 1** | Data subnet。Multi-AZ / automatic failover なし、TLS・認証・保存時暗号化、スナップショット 7 日 |
+| メッセージング | Amazon MQ for RabbitMQ broker | 1 | RabbitMQ `3.13`、**`mq.m7g.medium`**、`SINGLE_INSTANCE` | Data subnet、非公開。AMQPS 5671 と管理 HTTPS 443 を App SG から許可 |
+| オブジェクト保存 | S3 Live bucket | 1 | SSE-S3、Versioning 有効、非現行版は 90 日で削除 | Public access block と HTTPS 強制。有効データを OpenCTI が保存 |
+| オブジェクト保存 | S3 Archive bucket | 1 | SSE-S3、Versioning 有効、90 日で Glacier、365 日で Deep Archive | Public access block と HTTPS 強制。両バケットは削除・置換時に保持 |
+| 秘密情報 | Secrets Manager secret | 5 | 管理者認証情報、暗号化キー、health key、Redis 認証、RabbitMQ 認証 | Platform / Worker の ECS execution role が参照。キーはスタックの寿命中に維持する |
+| ログ | CloudWatch Logs LogGroup | 2 | `/ecs/{project}/platform` と `/ecs/{project}/worker`、**90 日**保持 | LogGroup は削除・置換時に保持 |
+| IAM | IAM Role / InstanceProfile | 3 Role + 1 profile | SSM relay role、ECS execution role、OpenCTI task role | Task role は S3、OpenSearch SigV4、ECS Exec を最小権限で許可 |
+
+### Connector スタック（`opencti-connector.yaml`、Connector ごとに 1 スタック）
+
+| AWS リソース | 数 | 既定スペック / 設定 | Core との関係 |
+|---|---:|---|---|
+| ECS Fargate Connector service | 0–1 task | x86_64 Linux、**0.5 vCPU / 1 GiB**、既定の DesiredCount は 1 | Core の ECS Cluster、App subnet、App Security Group を ImportValue で共有。Public IP は無効 |
+| ECS Task Definition | 1 | イメージ・Connector 種別・ID は必須指定。`CONNECTOR_SCOPE` は `*`、ログレベルは `info` | `OPENCTI_URL` は Core が出力する `http://platform.opencti.local:4000` |
+| CloudWatch Logs LogGroup | 1 | `/ecs/opencti/connectors/{ConnectorName}`、**90 日**保持 | Connector ごとに作成・保持 |
+| IAM Role | 2 | execution role: Connector token Secret と S3 `.env` の読取り。task role: ECS Exec | Token は専用の OpenCTI ユーザー用 Secret を指定する |
+
+> **注意:** 既定の `latest` イメージタグは検証環境向けです。本番では Platform / Worker / Connector を同一の検証済みバージョンへ固定してください。OpenSearch、Redis、RabbitMQ、NAT Gateway、常時稼働する Fargate タスクは主な継続課金リソースです。
+
 ## Terraform版から変更した点
 
 参照リポジトリは、3AZ、公開／内部ロードバランサー、ECS Fargate上のRabbitMQ＋EFS、OpenSearchの内部ユーザー認証を採用しています。本テンプレートでは以下へ変更
