@@ -13,10 +13,10 @@
   },
   {
     "ParameterKey": "OpenCTIPlatformImage",
-    "ParameterValue": "opencti/platform:latest"
+    "ParameterValue": "opencti/platform:7.260728.0"
   },
   {
     "ParameterKey": "OpenCTIWorkerImage",
-    "ParameterValue": "opencti/worker:latest"
+    "ParameterValue": "opencti/worker:7.260728.0"
   }
 ]

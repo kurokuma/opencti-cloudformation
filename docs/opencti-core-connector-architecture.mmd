@@ -26,7 +26,6 @@ flowchart TB
     end
     Secrets["Secrets Manager<br/>管理者/Token、暗号鍵、Health、<br/>Redis・RabbitMQ認証情報"]
     S3Live["S3 Live Bucket<br/>バージョニング + 暗号化"]
-    S3Archive["S3 Archive Bucket<br/>90日後Glacier<br/>365日後Deep Archive"]
     Logs["CloudWatch Logs<br/>platform / worker / connector"]
   end
 
@@ -42,7 +41,6 @@ flowchart TB
   Platform -->|"タスク実行用Secret"| Secrets
   Connector -->|"Token + S3 envファイル"| Secrets
   Platform -->|"S3 Gateway Endpoint経由HTTPS"| S3Live
-  S3Live -->|"ライフサイクル"| S3Archive
   Platform --> Logs
   Worker --> Logs
   Connector --> Logs

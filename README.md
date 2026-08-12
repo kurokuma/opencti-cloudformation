@@ -40,14 +40,13 @@ QinetiQ Cyber Intelligenceの[OpenCTI-Terraform](https://github.com/QinetiQ-Cybe
 | セキュリティ | Security Group | 5 | SSM relay、App、OpenSearch、Redis、RabbitMQ 用 | App への受信は relay と App SG 自身からの TCP 4000 のみ。データサービスも App SG からのみ許可 |
 | 管理アクセス | EC2 SSM relay | 1 | `t4g.micro`、Amazon Linux 2023 ARM64、gp3 8 GiB、EBS 暗号化 | Public IP / inbound rule なし。Session Manager のポートフォワード専用 |
 | コンテナ基盤 | ECS Cluster | 1 | Container Insights 有効 | Fargate 専用。EC2 コンテナインスタンスは作成しない |
-| OpenCTI | ECS Fargate Platform service | 1 task | x86_64 Linux、**2 vCPU / 16 GiB**、`opencti/platform:latest` | App subnet、Public IP 無効。UI / GraphQL は TCP 4000。Node.js ヒープ上限は 12 GiB |
-| OpenCTI | ECS Fargate Worker service | 2 tasks | x86_64 Linux、各 **1 vCPU / 2 GiB**、`opencti/worker:latest` | `OpenCTIWorkerDesiredCount` は 1–3 に変更可。App subnet、Public IP 無効 |
+| OpenCTI | ECS Fargate Platform service | 1 task | x86_64 Linux、**2 vCPU / 16 GiB**、`opencti/platform:7.260728.0` | App subnet、Public IP 無効。UI / GraphQL は TCP 4000。Node.js ヒープ上限は 12 GiB |
+| OpenCTI | ECS Fargate Worker service | 2 tasks | x86_64 Linux、各 **1 vCPU / 2 GiB**、`opencti/worker:7.260728.0` | `OpenCTIWorkerDesiredCount` は 1–3 に変更可。App subnet、Public IP 無効 |
 | サービス検出 | Cloud Map private DNS namespace / service | 各 1 | `opencti.local` / `platform`、A レコード TTL 10 秒 | Worker / Connector は `http://platform.opencti.local:4000` を使用 |
 | 検索 | Amazon OpenSearch Service domain | 1 | OpenSearch `2.17`、**`r7g.large.search` × 1**、gp3 **300 GiB / 3,000 IOPS / 250 MiB/s** | Data subnet。専用マスター・Zone awareness なし、保存時/通信時暗号化、HTTPS/TLS 1.2、IAM SigV4 認可 |
 | キャッシュ | ElastiCache for Redis ReplicationGroup | 1 node | Redis `7.1`、**`cache.r7g.large` × 1** | Data subnet。Multi-AZ / automatic failover なし、TLS・認証・保存時暗号化、スナップショット 7 日 |
 | メッセージング | Amazon MQ for RabbitMQ broker | 1 | RabbitMQ `3.13`、**`mq.m7g.medium`**、`SINGLE_INSTANCE` | Data subnet、非公開。AMQPS 5671 と管理 HTTPS 443 を App SG から許可 |
 | オブジェクト保存 | S3 Live bucket | 1 | SSE-S3、Versioning 有効、非現行版は 90 日で削除 | Public access block と HTTPS 強制。有効データを OpenCTI が保存 |
-| オブジェクト保存 | S3 Archive bucket | 1 | SSE-S3、Versioning 有効、90 日で Glacier、365 日で Deep Archive | Public access block と HTTPS 強制。両バケットは削除・置換時に保持 |
 | 秘密情報 | Secrets Manager secret | 5 | 管理者認証情報、暗号化キー、health key、Redis 認証、RabbitMQ 認証 | Platform / Worker の ECS execution role が参照。キーはスタックの寿命中に維持する |
 | ログ | CloudWatch Logs LogGroup | 2 | `/ecs/{project}/platform` と `/ecs/{project}/worker`、**90 日**保持 | LogGroup は削除・置換時に保持 |
 | IAM | IAM Role / InstanceProfile | 3 Role + 1 profile | SSM relay role、ECS execution role、OpenCTI task role | Task role は S3、OpenSearch SigV4、ECS Exec を最小権限で許可 |
@@ -61,7 +60,7 @@ QinetiQ Cyber Intelligenceの[OpenCTI-Terraform](https://github.com/QinetiQ-Cybe
 | CloudWatch Logs LogGroup | 1 | `/ecs/opencti/connectors/{ConnectorName}`、**90 日**保持 | Connector ごとに作成・保持 |
 | IAM Role | 2 | execution role: Connector token Secret と S3 `.env` の読取り。task role: ECS Exec | Token は専用の OpenCTI ユーザー用 Secret を指定する |
 
-> **注意:** 既定の `latest` イメージタグは検証環境向けです。本番では Platform / Worker / Connector を同一の検証済みバージョンへ固定してください。OpenSearch、Redis、RabbitMQ、NAT Gateway、常時稼働する Fargate タスクは主な継続課金リソースです。
+> **注意:** Platform / Worker は検証済みの `7.260728.0` に固定しています。Connectorも互換性を確認した同一リリース系列へ固定してください。OpenSearch、Redis、RabbitMQ、NAT Gateway、常時稼働する Fargate タスクは主な継続課金リソースです。
 
 ## Terraform版から変更した点
 
@@ -813,9 +812,6 @@ Connector ECS Task
 ### S3
 
 - Live Bucket：OpenCTIが直接使用。Glacierへ移動しない
-- Archive Bucket：STIX Bundle、記事原文、Manifest、手動Snapshot用
-- Archive Bucketは90日後Glacier Flexible Retrieval、365日後Deep Archive
-- Archive Bucketへのデータコピー／Export処理は別途実装が必要
 
 
 ## 参考

@@ -77,12 +77,12 @@ Parameters:
 
   OpenCTIPlatformImage:
     Type: String
-    Default: opencti/platform:latest
+    Default: opencti/platform:7.260728.0
     Description: Pin a tested version or use an ECR image URI for production.
 
   OpenCTIWorkerImage:
     Type: String
-    Default: opencti/worker:latest
+    Default: opencti/worker:7.260728.0
     Description: Pin the same tested OpenCTI version as the platform.
 
   OpenCTIPlatformCpu:
@@ -528,60 +528,6 @@ Resources:
             Resource:
               - !GetAtt LiveBucket.Arn
               - !Sub '${LiveBucket.Arn}/*'
-            Condition:
-              Bool:
-                aws:SecureTransport: false
-
-  ArchiveBucket:
-    Type: AWS::S3::Bucket
-    DeletionPolicy: Retain
-    UpdateReplacePolicy: Retain
-    Properties:
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      VersioningConfiguration:
-        Status: Enabled
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-      LifecycleConfiguration:
-        Rules:
-          - Id: ArchiveLifecycle
-            Status: Enabled
-            Transitions:
-              - StorageClass: GLACIER
-                TransitionInDays: 90
-              - StorageClass: DEEP_ARCHIVE
-                TransitionInDays: 365
-            NoncurrentVersionTransitions:
-              - StorageClass: GLACIER
-                TransitionInDays: 90
-              - StorageClass: DEEP_ARCHIVE
-                TransitionInDays: 365
-            AbortIncompleteMultipartUpload:
-              DaysAfterInitiation: 7
-      Tags:
-        - Key: Name
-          Value: !Sub '${ProjectName}-archive'
-
-  ArchiveBucketPolicy:
-    Type: AWS::S3::BucketPolicy
-    Properties:
-      Bucket: !Ref ArchiveBucket
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: DenyInsecureTransport
-            Effect: Deny
-            Principal: '*'
-            Action: s3:*
-            Resource:
-              - !GetAtt ArchiveBucket.Arn
-              - !Sub '${ArchiveBucket.Arn}/*'
             Condition:
               Bool:
                 aws:SecureTransport: false
@@ -1155,9 +1101,6 @@ Outputs:
     Value: !Ref LiveBucket
     Export:
       Name: !Sub '${AWS::StackName}-LiveBucketName'
-
-  ArchiveBucketName:
-    Value: !Ref ArchiveBucket
 
   OpenSearchEndpoint:
     Value: !GetAtt OpenSearchDomain.DomainEndpoint

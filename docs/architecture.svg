@@ -117,7 +117,6 @@
   <rect class="box nn" x="800" y="106" width="360" height="66" rx="8"/>
   <text class="t" x="814" y="130">Amazon S3</text>
   <text class="s" x="814" y="148">Live Bucket（OpenCTI直接使用）</text>
-  <text class="s" x="814" y="162">Archive Bucket（90日→Glacier）</text>
 
   <rect class="box nn" x="800" y="184" width="360" height="90" rx="8"/>
   <text class="t" x="814" y="206">Secrets Manager（Core）</text>

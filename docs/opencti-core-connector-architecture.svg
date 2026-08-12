@@ -31,8 +31,7 @@
   <rect x="1280" y="205" width="210" height="75" class="data"/><text x="1335" y="237" class="label">Redis 7.1</text><text x="1325" y="260" class="tiny">TLS/認証 ・ 6379</text>
   <rect x="1050" y="320" width="200" height="75" class="data"/><text x="1084" y="352" class="label">Amazon MQ</text><text x="1070" y="375" class="tiny">RabbitMQ ・ AMQPS 5671</text>
   <rect x="1280" y="320" width="210" height="75" class="data"/><text x="1332" y="352" class="label">Secrets Manager</text><text x="1315" y="375" class="tiny">管理者/暗号鍵/Redis/MQ</text>
-  <rect x="1050" y="445" width="200" height="93" class="data"/><text x="1110" y="477" class="label">S3 Live</text><text x="1075" y="500" class="tiny">バージョニング ・ SSE-S3</text><text x="1065" y="522" class="tiny">Gateway Endpoint</text>
-  <rect x="1280" y="445" width="210" height="93" class="data"/><text x="1335" y="477" class="label">S3 Archive</text><text x="1310" y="500" class="tiny">90日後: Glacier</text><text x="1310" y="520" class="tiny">365日後: Deep Archive</text>
+  <rect x="1050" y="445" width="440" height="93" class="data"/><text x="1215" y="477" class="label">S3 Live</text><text x="1175" y="500" class="tiny">バージョニング ・ SSE-S3</text><text x="1170" y="522" class="tiny">Gateway Endpoint</text>
   <rect x="1050" y="590" width="440" height="74" class="data"/><text x="1200" y="622" class="label">CloudWatch Logs</text><text x="1092" y="646" class="tiny">/ecs/{project}/platform ・ worker ・ /ecs/opencti/connectors/{name}</text>
   <text x="65" y="1000" class="tiny">外部からの管理アクセス: AWS CLI / コンソール → Systems Manager Session Manager → SSM中継 → platform:4000。ALBやインターネット向けエンドポイントは作成しない。</text>
   <rect x="85" y="350" width="200" height="85" class="boundary"/><text x="115" y="383" class="label">管理者</text><text x="105" y="408" class="tiny">ブラウザ+SSMセッション</text>
@@ -46,7 +45,6 @@
   <path d="M950 292 L1050 356" class="secure"/><text x="960" y="335" class="tiny">AMQPS 5671 / mgmt 443</text>
   <path d="M950 305 L1280 356" class="edge"/><text x="1115" y="346" class="tiny">タスク実行用Secret</text>
   <path d="M950 302 L1050 485" class="secure"/><text x="970" y="420" class="tiny">S3 Gateway Endpoint経由HTTPS</text>
-  <path d="M1250 492 L1280 492" class="edge"/><text x="1260" y="476" class="tiny">ライフサイクル</text>
   <path d="M720 317 L1120 590" class="edge"/><path d="M720 452 L1160 590" class="edge"/><path d="M880 452 L1300 590" class="edge"/>
   <path d="M650 290 L282 240" class="out"/><text x="360" y="225" class="tiny">制御された送信専用インターネット接続</text>
 </svg>

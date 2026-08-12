@@ -36,7 +36,6 @@ flowchart TB
         end
 
         S3Live["S3 Live Bucket"]
-        S3Archive["S3 Archive Bucket"]
 
         SecretsCore["Secrets Manager（Core）<br/>Admin/暗号鍵/Health/Redis/RabbitMQ"]
         IAMCore["IAM（Core）<br/>ECSExecutionRole / OpenCTITaskRole"]
@@ -93,7 +92,7 @@ flowchart TB
     class Admin,Internet actor
     class Relay,Platform,Worker,NAT,IGW compute
     class OS,Redis,MQ managed
-    class CloudMap,S3EP,S3Live,S3Archive,SecretsCore,IAMCore,LogsCore neutral
+    class CloudMap,S3EP,S3Live,SecretsCore,IAMCore,LogsCore neutral
     class ConnTask,SecretsConn,IAMConn,LogsConn connector
 ```
 
