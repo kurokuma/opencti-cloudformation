@@ -1,0 +1,4 @@
+# Local deployment parameters contain the OpenCTI administrator token.
+parameters.json
+params_test.json
+

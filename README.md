@@ -26,7 +26,7 @@ QinetiQ Cyber Intelligenceの[OpenCTI-Terraform](https://github.com/QinetiQ-Cybe
 
 ## デプロイされるリソースと既定スペック
 
-以下は、パラメータを変更せずに `opencti-core.yaml` と `opencti-connector.yaml` をデプロイした場合の構成です。インスタンスタイプ、タスクサイズ、台数、保持期間はテンプレートの既定値です。`parameters.json` または Connector デプロイ時の `--parameter-overrides` で変更できます。
+以下は、パラメータを変更せずに `opencti-core.yaml` と `opencti-connector.yaml` をデプロイした場合の構成です。インスタンスタイプ、タスクサイズ、台数、保持期間はテンプレートの既定値です。ローカル生成する `parameters.json` または Connector デプロイ時の `--parameter-overrides` で変更できます。
 
 ### Core スタック（`opencti-core.yaml`）
 
@@ -336,7 +336,7 @@ $json = (Get-Content parameters.example.json -Raw) -replace 'REPLACE-WITH-UUID-V
 Get-Content parameters.json
 ```
 
-`parameters.json`にはTokenが入る
+`parameters.json`にはTokenが入るためGit管理せず、デプロイ端末上でのみ生成・保管する（`.gitignore`で除外済み）
 
 ### 3.2 デプロイ
 
