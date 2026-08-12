@@ -22,13 +22,11 @@ QinetiQ Cyber Intelligenceの[OpenCTI-Terraform](https://github.com/QinetiQ-Cybe
 | `opencti-connector.yaml` | Connectorを1個ずつECS Fargate Serviceとして追加 |
 | `example-import-file-stix.env` | ImportFileStix Connector用の環境変数例 |
 | `exmaple/example-stix-bundle.json` | 取り込み動作を検証するための最小STIX 2.1バンドル |
-| `parameters.example.json` | コアスタックのパラメータ雛形 |
+| `parameters.example.json` | コアスタックのパラメータ雛形（参照用・コミット対象） |
 
 ## Terraform版から変更した点
 
-参照リポジトリは、3AZ、公開／内部ロードバランサー、ECS Fargate上のRabbitMQ＋EFS、OpenSearchの内部ユーザー認証を採用してい
-
-本テンプレートでは以下へ変更
+参照リポジトリは、3AZ、公開／内部ロードバランサー、ECS Fargate上のRabbitMQ＋EFS、OpenSearchの内部ユーザー認証を採用しています。本テンプレートでは以下へ変更
 
 | Terraform版 | 本テンプレート |
 |---|---|
@@ -63,6 +61,8 @@ $AWS_REGION = "us-west-1"
 $CORE_STACK = "opencti-core"
 $PROJECT    = "opencti"
 ```
+
+所要時間の目安は、コアスタックのCREATEで**25〜40分程度**（OpenSearch・ElastiCache・Amazon MQのプロビジョニングが支配的）です。
 
 ## 0. 前提ツールと権限
 
@@ -105,13 +105,14 @@ IAM Roleを作成するため、`deploy`時に`--capabilities CAPABILITY_IAM`が
 
 ### 0.4 OpenSearchのサービスリンクロール（アカウントで初回のみ・必須）
 
-**VPC内にOpenSearchドメインを作成するには、アカウントに`AWSServiceRoleForAmazonOpenSearchService`が存在している必要がある**
-未作成のままデプロイすると、OpenSearchドメイン作成時に次のエラーでスタックがロールバックする
+**VPC内にOpenSearchドメインを作成するには、アカウントに`AWSServiceRoleForAmazonOpenSearchService`が存在している必要があります。** 未作成のままデプロイすると、OpenSearchドメイン作成時に次のエラーでスタックがロールバックする
 
 ```text
 Before you can proceed, you must enable a service-linked role to give
 Amazon OpenSearch Service permissions to access your VPC.
 ```
+
+このロールはドメイン初回作成時に自動生成される仕様ですが、**その「初回」の作成自体は上記エラーで失敗することがあります**（SLRの生成とドメイン作成が同一リクエスト内で競合するため）。つまり1回目は失敗し、SLRだけが残る、という挙動になり得ます。事故を避けるため、**デプロイ前に明示的に作成しておくのが確実**
 
 まず存在と作成日時を確認する（IAMはグローバルなためリージョン指定不要。アカウントに1つあれば全リージョンで有効）
 
@@ -125,13 +126,12 @@ aws iam get-role --role-name AWSServiceRoleForAmazonOpenSearchService --query 'R
 aws iam create-service-linked-role --aws-service-name opensearchservice.amazonaws.com
 ```
 
-すでに存在する場合は`has been taken in this account`が返る。エラー表示だが**問題なし**（作成済みという意味）
+すでに存在する場合は`has been taken in this account`が返ります。エラー表示ですが**問題なし**（作成済みという意味）。
 
 
 ## 1. リージョン可用性の事前確認
 
-指定するインスタンスタイプとエンジンバージョンが、対象リージョンで利用可能か確認する
-ここで返らない値をパラメータに渡すとCREATEが失敗
+指定するインスタンスタイプとエンジンバージョンが、対象リージョンで利用可能か確認します。ここで返らない値をパラメータに渡すとCREATEが失敗
 
 ```bash
 # OpenSearchの利用可能バージョン（既定: OpenSearch_2.17）
@@ -235,9 +235,7 @@ aws mq describe-broker-instance-options --engine-type RABBITMQ --host-instance-t
 
 ### OpenSearchインスタンスタイプの可用性
 
-`r7g`系（Graviton3）は**古いリージョンでは提供されていない**ことがある
-
-バージョンだけでなく**インスタンスタイプ**も必ず確認
+`r7g`系（Graviton3）は**古いリージョンでは提供されていない**ことがあります。バージョンだけでなく**インスタンスタイプ**も必ず確認
 
 ```powershell
 aws opensearch list-instance-type-details --engine-version OpenSearch_2.17 --region $AWS_REGION --query 'InstanceTypeDetails[].InstanceType' --output text
@@ -246,7 +244,6 @@ aws opensearch list-instance-type-details --engine-version OpenSearch_2.17 --reg
 `r7g.large.search`が一覧に無ければ、`OpenSearchInstanceType`を利用可能なタイプ（例：`r6g.large.search`、`m6g.large.search`）へ変更
 
 `cache.r7g.large`（Redis）も同様に確認
-
 ElastiCacheには「利用可能ノードタイプ一覧」APIが無いため、予約ノードのオファリング有無を代替指標として使う
 
 ```powershell
@@ -274,7 +271,6 @@ $OPENCTI_ADMIN_TOKEN
 ```
 
 このTokenはWorkerとの認証使用
-
 次の手順で`parameters.json`へ埋め込み
 
 ## 3. コアスタックをデプロイ
@@ -284,7 +280,6 @@ $OPENCTI_ADMIN_TOKEN
 ### 3.1 parameters.json を用意
 
 雛形`parameters.example.json`をコピーし、手順2で生成したTokenを埋め込み
-
 `OpenCTIAdminEmail`など他の値は必要に応じて変更
 
 bash:
@@ -353,7 +348,7 @@ aws cloudformation describe-stack-events `
 
 ## 4. デプロイ状態の確認と切り分け
 
-CREATE_COMPLETE後、OpenCTI Platformが実際に起動したかを確認
+CREATE_COMPLETE後、OpenCTI Platformが実際に起動したかを確認します。
 
 ### 4.1 スタック状態と出力値
 
@@ -721,7 +716,6 @@ Data → Data import → Global files → アップロード → example-stix-bu
 ##### XMLファイルを扱いたい場合の注意
 
 `ImportFileStix`はOpenCTIのネイティブ形式である**STIX 2.1 JSON**を前提とした取り込みが基本
-
 STIX 1.x のXML（例：Mandiant APT1レポートの`Appendix_G_IOCs_Full.xml`）はレガシー形式であり、確実に取り込めない**まずはSTIX 2.1 JSONへ変換してから取り込むこと**
 
 MIMEタイプの不一致が疑われる場合は、`ConnectorScope`へ`application/xml`を追加して再デプロイする方法（`.xml`が`text/xml`ではなく`application/xml`として判定されるケースの回避）
@@ -760,7 +754,6 @@ Connector ECS Task
 ```
 
 公式Connectorの多くはコンテナ内部で実行間隔を管理するため、EventBridge Scheduled Taskではなく、`DesiredCount=1`のECS Serviceとして動かす
-
 1回処理して終了する自作Importerだけ、EventBridge Scheduler＋ECS RunTaskへ分ける方が適切
 
 ## 9. データ保持

@@ -1,0 +1,209 @@
+<svg viewBox="0 0 1180 1000" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl desc" font-family="system-ui, sans-serif">
+  <title id="ttl">OpenCTI AWS詳細構成図（Core + Connector）</title>
+  <desc id="desc">opencti-core.yamlとopencti-connector.yamlをデプロイしたAWS構成。単一VPC・単一AZ。Public SubnetにNAT Gateway、Private App SubnetにSSM中継EC2とECS Cluster（Platform、Worker×2、Connector×1〜5）、Private Data SubnetにOpenSearch・Redis・RabbitMQ。右カラムにS3・Secrets Manager（Core用5種＋Connector用個別）・IAMロール（Core用2種＋Connector用2種）・CloudWatch Logsを配置。ConnectorスタックはFn::ImportValueでCoreスタックのECS Cluster ARN・Subnet ID・Security Group IDを参照する。</desc>
+
+  <rect x="0" y="0" width="1180" height="1000" fill="#ffffff"/>
+
+  <style>
+    .box    { fill: #ffffff; stroke: #cbd2da; stroke-width: 1; }
+    .dash   { fill: none; stroke: #97a1ac; stroke-width: 1.2; stroke-dasharray: 5 4; }
+    .lblR   { fill: #55606b; font-size: 12px; font-weight: 700; }
+    .lblS   { fill: #79838d; font-size: 10.5px; font-weight: 600; letter-spacing:.3px; }
+    .nc     { fill: rgba(56,132,255,.13); stroke: rgba(56,132,255,.62); stroke-width: 1.2; }
+    .ncDash { fill: rgba(56,132,255,.13); stroke: rgba(56,132,255,.75); stroke-width: 1.4; stroke-dasharray: 5 3; }
+    .nm     { fill: rgba(150,90,240,.13); stroke: rgba(150,90,240,.62); stroke-width: 1.2; }
+    .nn     { fill: #eef1f4; stroke: #97a1ac; stroke-width: 1.2; }
+    .t      { fill: #1b2027; font-size: 12px; font-weight: 700; }
+    .s      { fill: #55606b; font-size: 9.8px; }
+    .p      { fill: #79838d; font-size: 9px; font-weight: 600; font-family: ui-monospace, monospace; }
+    .flow   { fill: none; stroke: #79838d; stroke-width: 1.3; }
+    .flowd  { fill: none; stroke: #79838d; stroke-width: 1.2; stroke-dasharray: 4 4; }
+    .mgmt   { fill: none; stroke: rgba(56,132,255,.85); stroke-width: 1.6; stroke-dasharray: 6 4; }
+    .imp    { fill: none; stroke: rgba(56,132,255,.85); stroke-width: 1.3; stroke-dasharray: 2 3; }
+  </style>
+
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L9,5 L0,10 z" fill="#79838d"/>
+    </marker>
+    <marker id="ahb" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+      <path d="M0,0 L9,5 L0,10 z" fill="rgba(56,132,255,.9)"/>
+    </marker>
+  </defs>
+
+  <!-- External actors -->
+  <rect class="box nc" x="40" y="14" width="240" height="46" rx="8"/>
+  <text class="t" x="54" y="35">管理者端末</text>
+  <text class="s" x="54" y="50">AWS CLI + SSM Plugin</text>
+
+  <rect class="box nn" x="900" y="14" width="240" height="46" rx="8"/>
+  <text class="t" x="914" y="35">インターネット</text>
+  <text class="s" x="914" y="50">Docker Hub / MITRE / CISA feeds</text>
+
+  <!-- AWS Cloud outer -->
+  <rect class="box" x="20" y="72" width="1140" height="912" rx="10" fill="none" stroke="#97a1ac"/>
+  <text class="lblR" x="34" y="92">AWS Cloud — us-west-1</text>
+
+  <!-- VPC -->
+  <rect class="box" x="36" y="106" width="740" height="546" rx="9" fill="none" stroke="#97a1ac"/>
+  <text class="lblR" x="50" y="124">VPC 10.20.0.0/16 — opencti-core.yaml</text>
+
+  <rect class="box nn" x="316" y="90" width="128" height="28" rx="6"/>
+  <text class="t" x="332" y="109" font-size="10.5px">Internet Gateway</text>
+
+  <!-- Public subnet -->
+  <rect class="box" x="52" y="136" width="708" height="72" rx="8" fill="none" stroke="#cbd2da"/>
+  <text class="lblS" x="64" y="152">PUBLIC SUBNET 10.20.0.0/24</text>
+  <rect class="box nn" x="66" y="160" width="186" height="40" rx="6"/>
+  <text class="t" x="78" y="180" font-size="10.5px">NAT Gateway + EIP</text>
+
+  <!-- App subnet -->
+  <rect class="box" x="52" y="220" width="708" height="196" rx="8" fill="none" stroke="#cbd2da"/>
+  <text class="lblS" x="64" y="238">PRIVATE APP SUBNET 10.20.10.0/24</text>
+
+  <rect class="box nc" x="66" y="250" width="122" height="52" rx="7"/>
+  <text class="t" x="78" y="271" font-size="10.5px">SSM中継EC2</text>
+  <text class="s" x="78" y="286">t4g.micro/Inbound無</text>
+
+  <rect class="box nn" x="66" y="312" width="122" height="46" rx="7"/>
+  <text class="t" x="78" y="332" font-size="10.5px">Cloud Map</text>
+  <text class="s" x="78" y="346">platform.opencti.local</text>
+
+  <!-- ECS Cluster box -->
+  <rect class="box" x="206" y="250" width="536" height="150" rx="8" fill="none" stroke="rgba(56,132,255,.45)" stroke-dasharray="3 3"/>
+  <text class="lblS" x="218" y="266" fill="rgba(56,132,255,.9)">ECS CLUSTER: opencti-cluster</text>
+
+  <rect class="box nc" x="220" y="278" width="160" height="60" rx="7"/>
+  <text class="t" x="232" y="300">Platform Task</text>
+  <text class="s" x="232" y="316">Fargate 2vCPU/16GB</text>
+  <text class="p" x="232" y="329">:4000</text>
+
+  <rect class="box nc" x="396" y="278" width="150" height="60" rx="7"/>
+  <text class="t" x="408" y="300">Worker Task ×2</text>
+  <text class="s" x="408" y="316">Fargate 1vCPU/2GB</text>
+
+  <rect class="box ncDash" x="562" y="278" width="164" height="60" rx="7"/>
+  <text class="t" x="574" y="300">Connector Task</text>
+  <text class="s" x="574" y="316">Fargate 0.5vCPU/1GB</text>
+  <text class="p" x="574" y="329">×1〜5（別スタック）</text>
+
+  <!-- Data subnet -->
+  <rect class="box" x="52" y="428" width="708" height="204" rx="8" fill="none" stroke="#cbd2da"/>
+  <text class="lblS" x="64" y="446">PRIVATE DATA SUBNET 10.20.20.0/24</text>
+
+  <rect class="box nm" x="66" y="460" width="190" height="82" rx="7"/>
+  <text class="t" x="80" y="484">OpenSearch</text>
+  <text class="s" x="80" y="501">r7g.large.search</text>
+  <text class="s" x="80" y="515">gp3 300GB</text>
+  <text class="p" x="80" y="530">:443 SigV4/IAM</text>
+
+  <rect class="box nm" x="280" y="460" width="190" height="82" rx="7"/>
+  <text class="t" x="294" y="484">ElastiCache Redis</text>
+  <text class="s" x="294" y="501">cache.r7g.large</text>
+  <text class="s" x="294" y="515">noeviction</text>
+  <text class="p" x="294" y="530">:6379 TLS+auth</text>
+
+  <rect class="box nm" x="494" y="460" width="240" height="82" rx="7"/>
+  <text class="t" x="508" y="484">Amazon MQ RabbitMQ</text>
+  <text class="s" x="508" y="501">mq.m7g.medium single</text>
+  <text class="p" x="508" y="516">AMQPS:5671</text>
+  <text class="p" x="508" y="530">管理API:443</text>
+
+  <!-- S3 Gateway Endpoint -->
+  <rect class="box nn" x="52" y="600" width="708" height="34" rx="7"/>
+  <text class="t" x="66" y="622" font-size="10.5px">S3 Gateway Endpoint（App/Dataルートテーブル）</text>
+
+  <!-- Right column: S3, Secrets(core), IAM(core), Logs(core) -->
+  <rect class="box nn" x="800" y="106" width="360" height="66" rx="8"/>
+  <text class="t" x="814" y="130">Amazon S3</text>
+  <text class="s" x="814" y="148">Live Bucket（OpenCTI直接使用）</text>
+  <text class="s" x="814" y="162">Archive Bucket（90日→Glacier）</text>
+
+  <rect class="box nn" x="800" y="184" width="360" height="90" rx="8"/>
+  <text class="t" x="814" y="206">Secrets Manager（Core）</text>
+  <text class="s" x="814" y="223">Admin / 暗号鍵 / Health Key</text>
+  <text class="s" x="814" y="237">Redis Auth / RabbitMQ Auth</text>
+  <text class="p" x="814" y="252">計5シークレット</text>
+  <text class="p" x="814" y="264">→ ECS Execution RoleがGetSecretValue</text>
+
+  <rect class="box nn" x="800" y="286" width="360" height="70" rx="8"/>
+  <text class="t" x="814" y="308">IAM（Core）</text>
+  <text class="s" x="814" y="325">ECSExecutionRole（Secret取得）</text>
+  <text class="s" x="814" y="339">OpenCTITaskRole（S3/OpenSearch/ExecuteCommand）</text>
+
+  <rect class="box nn" x="800" y="368" width="360" height="60" rx="8"/>
+  <text class="t" x="814" y="390">CloudWatch Logs（Core）</text>
+  <text class="s" x="814" y="407">/ecs/opencti/platform, /worker（Retain）</text>
+
+  <!-- Connector stack band (bottom, dashed border spanning full width) -->
+  <rect class="box ncDash" x="36" y="662" width="1104" height="300" rx="10"/>
+  <text class="lblR" x="50" y="686" fill="rgba(56,132,255,.9)">Connectorスタック ×1〜5 — opencti-connector.yaml（コアと別デプロイ）</text>
+
+  <rect class="box ncDash" x="60" y="704" width="220" height="70" rx="7"/>
+  <text class="t" x="74" y="728">Connector Task</text>
+  <text class="s" x="74" y="745">Fargate 0.5vCPU/1GB</text>
+  <text class="s" x="74" y="759">ConnectorごとにDesiredCount=1</text>
+
+  <rect class="box ncDash" x="304" y="704" width="220" height="70" rx="7"/>
+  <text class="t" x="318" y="728">Secrets Manager</text>
+  <text class="s" x="318" y="745">Connector User Token</text>
+  <text class="s" x="318" y="759">（Connectorごとに個別）</text>
+
+  <rect class="box ncDash" x="548" y="704" width="270" height="70" rx="7"/>
+  <text class="t" x="562" y="726">IAM</text>
+  <text class="s" x="562" y="743">ConnectorExecutionRole</text>
+  <text class="s" x="562" y="757">（Secret取得+S3 env file取得）</text>
+
+  <rect class="box ncDash" x="838" y="704" width="270" height="70" rx="7"/>
+  <text class="t" x="852" y="726">IAM / Logs</text>
+  <text class="s" x="852" y="743">ConnectorTaskRole（ExecuteCommand）</text>
+  <text class="s" x="852" y="757">/ecs/opencti/connectors/*</text>
+
+  <text class="s" x="60" y="806" fill="#55606b">Fn::ImportValue で Core スタックから参照:</text>
+  <text class="p" x="60" y="824">EcsClusterArn ／ AppSubnetId ／ AppSecurityGroupId ／ OpenCTIInternalUrl（http://platform.opencti.local:4000）</text>
+
+  <text class="s" x="60" y="852" fill="#55606b">env fileはS3（Live Bucket配下）から取得。OPENCTI_TOKENはConnector専用SecretからJSONキー参照で注入。</text>
+  <text class="s" x="60" y="870" fill="#55606b">ConnectorはAmazon MQ（AMQPS:5671）経由でWorker/Platformと非同期連携し、Platform GraphQL API（:4000）でデータを登録。</text>
+
+  <!-- ===== Flows ===== -->
+  <path class="mgmt" d="M160,60 L86,86 L86,270" marker-end="url(#ahb)"/>
+  <text class="p" x="170" y="78" fill="rgba(56,132,255,.9)">SSM Session Manager</text>
+
+  <path class="flow" d="M188,278 L206,278" marker-end="url(#ah)"/>
+  <path class="flow" d="M396,300 L380,300" marker-end="url(#ah)"/>
+  <path class="flow" d="M642,300 L546,300" marker-end="url(#ah)"/>
+  <text class="p" x="560" y="290">:4000 GraphQL</text>
+
+  <path class="flow" d="M300,338 L161,458" marker-end="url(#ah)"/>
+  <text class="p" x="190" y="410">:443</text>
+  <path class="flow" d="M330,338 L375,458" marker-end="url(#ah)"/>
+  <text class="p" x="345" y="410">:6379</text>
+  <path class="flow" d="M420,338 L560,458" marker-end="url(#ah)"/>
+  <text class="p" x="460" y="418">:5671</text>
+  <path class="flow" d="M644,338 L640,458" marker-end="url(#ah)"/>
+
+  <path class="flow" d="M340,634 L340,600" marker-end="url(#ah)"/>
+  <path class="flowd" d="M980,172 L980,600" marker-end="url(#ah)"/>
+  <text class="p" x="988" y="400" transform="rotate(90 988 400)">Secret注入（起動時）</text>
+
+  <path class="flowd" d="M300,220 L200,208" marker-end="url(#ah)"/>
+  <text class="p" x="210" y="216">既定ルート</text>
+  <path class="flow" d="M160,160 L360,118" marker-end="url(#ah)"/>
+  <path class="flow" d="M444,104 L900,44" marker-end="url(#ah)"/>
+  <text class="p" x="620" y="70">アウトバウンド:443</text>
+
+  <path class="imp" d="M644,704 L644,632 L500,632 L500,400" marker-end="url(#ahb)"/>
+  <text class="p" x="654" y="660" fill="rgba(56,132,255,.9)">Fn::ImportValue</text>
+
+  <path class="flow" d="M280,739 L60,739 L60,634" marker-end="url(#ah)"/>
+
+  <!-- Legend -->
+  <rect x="42" y="944" width="14" height="14" rx="3" class="nc"/>
+  <text class="s" x="62" y="955">Core コンピュート</text>
+  <rect x="210" y="944" width="14" height="14" rx="3" class="ncDash"/>
+  <text class="s" x="230" y="955">Connector スタック（破線＝別デプロイ）</text>
+  <rect x="470" y="944" width="14" height="14" rx="3" class="nm"/>
+  <text class="s" x="490" y="955">マネージド依存（検索/Redis/MQ）</text>
+  <rect x="720" y="944" width="14" height="14" rx="3" class="nn"/>
+  <text class="s" x="740" y="955">S3/Secrets/IAM/Logs/ネットワーク</text>
+</svg>

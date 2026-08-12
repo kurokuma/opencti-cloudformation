@@ -9,7 +9,7 @@
   },
   {
     "ParameterKey": "OpenCTIAdminToken",
-    "ParameterValue": "REPLACE-WITH-UUID-V4"
+    "ParameterValue": "12e218ab-1589-4015-9417-f50146fc1717"
   },
   {
     "ParameterKey": "OpenCTIPlatformImage",

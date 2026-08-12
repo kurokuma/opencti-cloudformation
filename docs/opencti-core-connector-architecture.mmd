@@ -1,0 +1,51 @@
+flowchart TB
+  Admin["管理者<br/>ブラウザ + AWS CLI"] -->|"SSM Session Manager<br/>ポートフォワード"| Relay
+
+  subgraph AWS["AWSアカウント / リージョン"]
+    direction TB
+    subgraph VPC["VPC — 単一アベイラビリティゾーン"]
+      direction LR
+      subgraph Public["Public サブネット"]
+        NAT["NAT Gateway<br/>送信専用"]
+      end
+      subgraph App["App サブネット — プライベート"]
+        Relay["SSM中継EC2<br/>Inbound SGなし / IMDSv2"]
+        DNS["Cloud Map private DNS<br/>opencti.local"]
+        Platform["ECS Fargate: Platform<br/>OpenCTI UI + GraphQL :4000"]
+        Worker["ECS Fargate: Worker<br/>DesiredCountは可変"]
+        subgraph ConnectorStack["Connector用の別CloudFormationスタック"]
+          Connector["ECS Fargate: Connector<br/>Public IPなし"]
+          Imports["Coreスタックから参照:<br/>Cluster ARN, App Subnet/SG,<br/>OpenCTI内部URL"]
+        end
+      end
+      subgraph Data["Data サブネット / マネージドサービス"]
+        OS["OpenSearch VPCドメイン<br/>HTTPS 443 ・ IAM SigV4"]
+        Redis["ElastiCache Redis 7.1<br/>TLS/認証 ・ 6379"]
+        MQ["Amazon MQ RabbitMQ<br/>AMQPS 5671 / 管理API 443"]
+      end
+    end
+    Secrets["Secrets Manager<br/>管理者/Token、暗号鍵、Health、<br/>Redis・RabbitMQ認証情報"]
+    S3Live["S3 Live Bucket<br/>バージョニング + 暗号化"]
+    S3Archive["S3 Archive Bucket<br/>90日後Glacier<br/>365日後Deep Archive"]
+    Logs["CloudWatch Logs<br/>platform / worker / connector"]
+  end
+
+  Admin --> Relay
+  Relay -->|"TCP 4000"| Platform
+  DNS -.->|"platform.opencti.local"| Platform
+  Worker -->|"HTTP :4000"| Platform
+  Connector -->|"HTTP :4000"| Platform
+  Connector -.-> Imports
+  Platform -->|"HTTPS"| OS
+  Platform -->|"TLS"| Redis
+  Platform -->|"AMQPS / HTTPS"| MQ
+  Platform -->|"タスク実行用Secret"| Secrets
+  Connector -->|"Token + S3 envファイル"| Secrets
+  Platform -->|"S3 Gateway Endpoint経由HTTPS"| S3Live
+  S3Live -->|"ライフサイクル"| S3Archive
+  Platform --> Logs
+  Worker --> Logs
+  Connector --> Logs
+  Platform -.->|"送信専用インターネット"| NAT
+  Worker -.->|"送信専用インターネット"| NAT
+  Connector -.->|"送信専用インターネット"| NAT

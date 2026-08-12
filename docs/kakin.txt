@@ -1,0 +1,43 @@
+﻿今回検証で実際にデプロイした us-west-1 を基準に、AWS公式Price List API（認証不要）から取得した実価格で計算しました。オンデマンド料金・Fargate x86_64・単一AZ構成が前提です。
+
+Coreスタックの月額固定費（内訳）
+項目	単価	月額（730h換算）
+NAT Gateway（時間分のみ）	$0.048/hr	$35.04
+SSM中継 EC2 (t4g.micro)	$0.01/hr	$7.30
+SSM中継 EBS gp3 8GB	$0.096/GB-mo	$0.77
+ECS Fargate Platform (2vCPU/16GB ×1)	$0.04656/vCPU-hr + $0.00511/GB-hr	$127.66
+ECS Fargate Worker (1vCPU/2GB ×2)	同上	$82.90
+OpenSearch r7g.large.search ×1	$0.198/hr	$144.54
+OpenSearch gp3ストレージ 300GB	$0.1464/GB-mo	$43.92
+OpenSearch gp3追加スループット(250-125=125MiB/s)	$0.0768/MiBps-mo	$9.60
+ElastiCache Redis cache.r7g.large ×1	$0.219/hr	$159.87
+Amazon MQ mq.m7g.medium(Single-AZ)	$0.1595/hr	$116.44
+Amazon MQストレージ（20GB想定）	$0.12/GB-mo	$2.40
+Secrets Manager（Admin/暗号鍵/Health/Redis/MQの5個）	$0.40/secret	$2.00
+CloudWatch Logs（軽負荷想定：2GB/月）	$0.67/GB取込	$1.40
+S3 Live/Archive（軽負荷想定：数GB）	$0.026/GB	$0.20
+NAT データ処理（軽負荷想定：20GB/月）	$0.048/GB	$0.96
+Core合計		? $735.0/月
+Connector 1個あたり：ECS Fargate (0.5vCPU/1GB×1) $20.72 + Secrets Manager $0.40 + ログ/NAT軽負荷分 ? $21.6/月
+
+まとめ（1USD＝\164、2026-07-26時点の実勢レート）
+構成	月額(USD)	月額(円)	年額(USD)	年額(円)
+Core のみ	$735	約12万円	$8,820	約145万円
+Core + Connector×1	$757	約12.4万円	$9,079	約149万円
+Core + Connector×2	$778	約12.8万円	$9,338	約153万円
+Core + Connector×3	$800	約13.1万円	$9,598	約157万円
+Core + Connector×4	$821	約13.5万円	$9,857	約162万円
+Core + Connector×5	$843	約13.8万円	$10,116	約166万円
+内訳の傾向
+固定費の大半（$735のうち約$728＝99%）は5つの常時稼働マネージドサービスが占めます。
+
+Redis（$160）、OpenSearch 計（$198）、MQ 計（$119）、Fargate Platform+Worker（$211）、NAT（$35）
+Connectorは1個あたり月$22程度と軽く、5個追加しても全体への影響は+15%弱です。
+
+前提・変動要因（重要）
+軽負荷想定とした3項目（CloudWatch Logs取込量、S3ストレージ量、NAT経由データ量）は運用次第で大きく変動します。特に外部Feed Connector（MITRE/CISA等、常時ポーリング）を複数追加すると、ログ量・NAT通信量が増えて月数千?数万円上振れする可能性があります
+長期運用でのストレージ増加は含みません（OpenSearch/S3は実データが蓄積すると容量課金が増えます。1年後は300GBの前提を超える可能性が高いです）
+Reserved Instance/Savings Plansなど割引契約は未適用（オンデマンドのみ）。OpenSearch/Redisは1年前約で3?4割程度下がる余地があります
+データ転送量（アウトバウンド、SSM経由等）は僅少想定
+サポートプラン費用は含みません
+必要であれば、ap-northeast-1（東京）での試算や、Reserved Instance適用時の試算も追加で計算できます。
