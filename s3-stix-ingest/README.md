@@ -44,9 +44,61 @@ Live Bucket は OpenCTI のオブジェクトストア（`MINIO__BUCKET_NAME`）
 | 項目 | 確認内容 |
 |---|---|
 | コアスタック | `opencti-core` がデプロイ済みで稼働中 |
+| ImportFileStix Connector | デプロイ済みでUIに `Active` 表示されている |
 | API用アカウント | OpenCTI上で作成済み、トークン払い出し済み |
 | **CONNECTORAPI ケイパビリティ** | **API用アカウントのロールに付与されていること**（`Settings → Security → Roles`）。無いと `stixBundlePush` が権限エラーになる |
-| CONNECTOR_ID | ImportFileStixデプロイ時に生成したUUID。`Settings → Security → Users` の該当コネクターユーザー、または Connectorスタックのパラメータで確認 |
+| **CONNECTOR_ID** | ImportFileStixデプロイ時に生成したUUID（後述の取得方法を参照） |
+
+### ⚠️ CONNECTOR_ID と 管理者トークンを取り違えないこと
+
+本手順では**2つの異なる値**をLambdaへ渡します。どちらもUUID形式に見えることがあり混同しやすいため、必ず区別してください。
+
+| Lambdaの設定 | 渡す値 | 正体 | 取り違えやすい値 |
+|---|---|---|---|
+| `CONNECTOR_ID` 環境変数 | ImportFileStixの**コネクターID** | 「どのpushキューへ流すか」を示す**識別子** | `$OPENCTI_ADMIN_TOKEN` |
+| `TOKEN_SECRET_ARN`（Secret内の値） | **API用アカウントのトークン** | 「誰として実行するか」を示す**認証情報** | 同上 |
+
+特に紛らわしいのが `$OPENCTI_ADMIN_TOKEN` です。これはコアスタックのデプロイ時に `[guid]::NewGuid().ToString()` で生成した**管理者の認証トークン**であり、Connectorスタックのデプロイ時に同じ方法で生成した `CONNECTOR_ID` とは**まったくの別物**です。生成方法が同じというだけで、用途も値も異なります。
+
+CloudFormationテンプレート上でも経路は完全に分かれています。
+
+```text
+OpenCTIAdminToken ─→ Adminシークレット ─→ Platform の APP__ADMIN__TOKEN
+                                      └─→ Worker   の OPENCTI_TOKEN
+ConnectorId       ─→ Connectorタスクの CONNECTOR_ID（識別子）
+ConnectorTokenSecretArn ─→ Connectorタスクの OPENCTI_TOKEN（Connector専用の認証情報）
+```
+
+つまり **「認証トークン」と「コネクターID」は別レイヤー**です。本手順のLambdaは両方を使いますが、それぞれ別の値を指定します。
+
+```text
+CONNECTOR_ID     = ImportFileStix の UUID      ← 識別子。どのpushキューに流すか
+TOKEN_SECRET_ARN = API用アカウントのトークン    ← 認証。誰として実行するか
+```
+
+> 管理者トークンでも技術的には動作します（管理者は CONNECTORAPI を含む全ケイパビリティを持つため）。ただし影響範囲が最大の資格情報を自動処理に使うのは避け、払い出し済みのAPI用アカウントのトークンを使用してください。
+
+### CONNECTOR_ID の取得方法
+
+いずれの方法でも同じUUIDが返ります。方法1と方法2の結果が一致することを確認すると確実です。
+
+**方法1：CloudFormationスタックのパラメータから（最も確実）**
+
+```powershell
+aws cloudformation describe-stacks --region $AWS_REGION --stack-name opencti-connector-import-file-stix --query 'Stacks[0].Parameters[?ParameterKey==`ConnectorId`].ParameterValue' --output text
+```
+
+**方法2：ECSタスク定義の環境変数から**
+
+```powershell
+aws ecs describe-task-definition --region $AWS_REGION --task-definition opencti-connector-import-file-stix --query "taskDefinition.containerDefinitions[0].environment[?name=='CONNECTOR_ID'].value" --output text
+```
+
+**方法3：OpenCTIのUIから**
+
+`Data → Ingestion → Connectors → ImportFileStix` を開くと、ブラウザのURL末尾がそのコネクターのIDになっています。
+
+> **組み込みコネクターは指定しないでください。** UIの一覧には `[FILE] CSV Mapper import` や `[DRAFT] Draft validation` といったOpenCTI内部処理用のコネクターも表示されますが、これらのキューへ外部からバンドルを流すのは想定外の使い方です。指定すべきは**自分でデプロイした（＝自分でUUIDを生成した）コネクター**のIDだけです。
 
 ## 構築手順
 
@@ -63,11 +115,19 @@ $PROJECT      = "opencti"
 $FUNC_NAME    = "opencti-s3-stix-ingest"
 $ROLE_NAME    = "opencti-s3-ingest-lambda-role"
 
-# ImportFileStix の UUID（既存のものを流用）
+# 識別子：ImportFileStix の コネクターID（既存のものを流用）
+# ※ $OPENCTI_ADMIN_TOKEN とは別物。前掲の「取得方法」で確認すること
 $CONNECTOR_ID = "<ImportFileStixのUUID>"
 
-# OpenCTI の API トークン
+# 認証情報：API用アカウントのトークン（管理者トークンではない）
 $OPENCTI_API_TOKEN = "<払い出し済みのトークン>"
+```
+
+`$CONNECTOR_ID` は次のコマンドで直接代入することもできます。
+
+```powershell
+$CONNECTOR_ID = aws cloudformation describe-stacks --region $AWS_REGION --stack-name opencti-connector-import-file-stix --query 'Stacks[0].Parameters[?ParameterKey==`ConnectorId`].ParameterValue' --output text
+$CONNECTOR_ID
 ```
 
 コアスタックからネットワーク情報を取得します。
@@ -265,7 +325,7 @@ Arsenal      → Malware      → "ValidationTestMalware"
 |---|---|---|
 | Lambdaがタイムアウトする | VPC設定漏れ、またはSGで4000番が開いていない | App Subnetに配置されているか、手順5のIngressが入っているか確認 |
 | `FORBIDDEN_ACCESS` / 権限エラー | API用アカウントに **CONNECTORAPI** ケイパビリティが無い | `Settings → Security → Roles` でロールに付与 |
-| `Connector not found` 系のエラー | `CONNECTOR_ID` が実在しない | ImportFileStixのUUIDを再確認 |
+| `Connector not found` 系のエラー | `CONNECTOR_ID` が実在しない。**`$OPENCTI_ADMIN_TOKEN` を誤って指定している**ケースが多い（どちらもUUID形式のため） | 「CONNECTOR_ID の取得方法」で正しい値を再取得 |
 | Secrets Manager呼び出しでタイムアウト | NAT経由の疎通不良 | App Subnetの既定ルートがNAT Gatewayを指しているか確認 |
 | Lambdaは成功するがデータが入らない | Worker側で処理が滞留 | Workerログを確認。`Connected workers` が1以上か確認 |
 | Lambdaが大量に起動する | Live Bucketにトリガーを付けてしまっている | 専用バケットに付け直す（本書冒頭の警告を参照） |
