@@ -13,8 +13,8 @@ flowchart TB
         DNS["Cloud Map private DNS<br/>opencti.local"]
         Platform["ECS Fargate: Platform<br/>OpenCTI UI + GraphQL :4000"]
         Worker["ECS Fargate: Worker<br/>DesiredCountは可変"]
-        subgraph ConnectorStack["Connector用の別CloudFormationスタック"]
-          Connector["ECS Fargate: Connector<br/>Public IPなし"]
+        subgraph ConnectorStack["ImportFileStix用の別CloudFormationスタック"]
+          Connector["ECS Fargate: ImportFileStix Connector<br/>Public IPなし"]
           Imports["Coreスタックから参照:<br/>Cluster ARN, App Subnet/SG,<br/>OpenCTI内部URL"]
         end
       end

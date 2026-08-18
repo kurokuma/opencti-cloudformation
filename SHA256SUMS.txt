@@ -1,2 +1,2 @@
 7d4aa4a912b64bd99f3a24dcd13d22ea91fcdb8e296fb08ebd205fdebcebc3e2  opencti-cloudformation/opencti-core.yaml
-48910f91ea7bdd29d23b20b3c8bf652404551d54069d9712b6f518c0a03803bc  opencti-cloudformation/opencti-connector.yaml
+48910f91ea7bdd29d23b20b3c8bf652404551d54069d9712b6f518c0a03803bc  opencti-cloudformation/opencti-connector-import-file-stix.yaml

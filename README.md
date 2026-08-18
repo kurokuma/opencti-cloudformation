@@ -19,14 +19,15 @@ QinetiQ Cyber Intelligenceの[OpenCTI-Terraform](https://github.com/QinetiQ-Cybe
 | ファイル | 用途 |
 |---|---|
 | `opencti-core.yaml` | VPC、NAT、SSM中継、ECS、OpenSearch、Redis、RabbitMQ、S3、Platform、Worker |
-| `opencti-connector.yaml` | Connectorを1個ずつECS Fargate Serviceとして追加 |
+| `opencti-connector-import-file-stix.yaml` | ImportFileStix ConnectorをECS Fargate Serviceとして追加 |
 | `example-import-file-stix.env` | ImportFileStix Connector用の環境変数例 |
-| `exmaple/example-stix-bundle.json` | 取り込み動作を検証するための最小STIX 2.1バンドル |
+| `example/example-stix-bundle.json` | 取り込み動作を検証するための最小STIX 2.1バンドル |
 | `parameters.example.json` | コアスタックのパラメータ雛形（参照用・コミット対象） |
+| `s3-stix-ingest/` | S3にSTIXバンドルを置くとLambda経由でOpenCTIへ自動投入する仕組み（手動構築・CloudFormation不使用） |
 
 ## デプロイされるリソースと既定スペック
 
-以下は、パラメータを変更せずに `opencti-core.yaml` と `opencti-connector.yaml` をデプロイした場合の構成です。インスタンスタイプ、タスクサイズ、台数、保持期間はテンプレートの既定値です。ローカル生成する `parameters.json` または Connector デプロイ時の `--parameter-overrides` で変更できます。
+以下は、パラメータを変更せずに `opencti-core.yaml` と `opencti-connector-import-file-stix.yaml` をデプロイした場合の構成です。インスタンスタイプ、タスクサイズ、台数、保持期間はテンプレートの既定値です。ローカル生成する `parameters.json` または Connector デプロイ時の `--parameter-overrides` で変更できます。
 
 ### Core スタック（`opencti-core.yaml`）
 
@@ -51,7 +52,7 @@ QinetiQ Cyber Intelligenceの[OpenCTI-Terraform](https://github.com/QinetiQ-Cybe
 | ログ | CloudWatch Logs LogGroup | 2 | `/ecs/{project}/platform` と `/ecs/{project}/worker`、**90 日**保持 | LogGroup は削除・置換時に保持 |
 | IAM | IAM Role / InstanceProfile | 3 Role + 1 profile | SSM relay role、ECS execution role、OpenCTI task role | Task role は S3、OpenSearch SigV4、ECS Exec を最小権限で許可 |
 
-### Connector スタック（`opencti-connector.yaml`、Connector ごとに 1 スタック）
+### ImportFileStix Connectorスタック（`opencti-connector-import-file-stix.yaml`）
 
 | AWS リソース | 数 | 既定スペック / 設定 | Core との関係 |
 |---|---:|---|---|
@@ -582,7 +583,7 @@ http://localhost:4000
 手順5の`email`／`password`でログイン
 
 
-## 7. Connector追加の基本フロー
+## 7. ImportFileStix Connector追加の基本フロー
 
 参照Terraformと同様、Connectorはコアから分離。ConnectorごとにOpenCTI上の専用ユーザーとTokenを作る
 
@@ -671,7 +672,7 @@ aws s3 cp `
 $ENV_FILE_ARN = "arn:aws:s3:::${LIVE_BUCKET}/connector-env/import-file-stix.env"
 ```
 
-### 7.4 Connectorスタックをデプロイ
+### 7.4 ImportFileStix Connectorスタックをデプロイ
 
 bash:
 
@@ -682,7 +683,7 @@ echo "CONNECTOR_ID=$CONNECTOR_ID  # 再デプロイ時も同じ値を使う"
 aws cloudformation deploy \
   --region "$AWS_REGION" \
   --stack-name opencti-connector-import-file-stix \
-  --template-file opencti-connector.yaml \
+  --template-file opencti-connector-import-file-stix.yaml \
   --capabilities CAPABILITY_IAM \
   --parameter-overrides \
     CoreStackName="$CORE_STACK" \
@@ -706,7 +707,7 @@ $CONNECTOR_ID = [guid]::NewGuid().ToString()
 aws cloudformation deploy `
   --region $AWS_REGION `
   --stack-name opencti-connector-import-file-stix `
-  --template-file opencti-connector.yaml `
+  --template-file opencti-connector-import-file-stix.yaml `
   --capabilities CAPABILITY_IAM `
   --parameter-overrides `
     "CoreStackName=$CORE_STACK" `
@@ -782,7 +783,7 @@ aws logs tail "/ecs/${PROJECT}/worker" --region $AWS_REGION --since 10m
 
 ## 8. 外部Feed Connector
 
-MITRE、CISA KEVなどの外部Import Connectorも同じ`opencti-connector.yaml`で常駐ECS Serviceとして追加
+MITRE、CISA KEVなどの外部Import Connectorを追加する場合は、`opencti-connector-import-file-stix.yaml`を複製し、Connector固有のイメージ、種別、スコープ、環境変数に合わせた専用テンプレートとして管理する
 
 ```text
 Connector ECS Task

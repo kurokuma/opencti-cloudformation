@@ -41,9 +41,9 @@ flowchart TB
         IAMCore["IAM（Core）<br/>ECSExecutionRole / OpenCTITaskRole"]
         LogsCore["CloudWatch Logs（Core）<br/>/ecs/opencti/platform, /worker"]
 
-        subgraph ConnectorStack["Connectorスタック ×1〜5（opencti-connector.yaml）"]
+        subgraph ConnectorStack["ImportFileStix Connectorスタック（opencti-connector-import-file-stix.yaml）"]
             direction TB
-            ConnTask["Connector Task<br/>Fargate 0.5vCPU/1GB ×1〜5"]
+            ConnTask["ImportFileStix Connector Task<br/>Fargate 0.5vCPU/1GB ×1"]
             SecretsConn["Secrets Manager<br/>Connector Token（個別）"]
             IAMConn["IAM<br/>ConnectorExecutionRole / ConnectorTaskRole"]
             LogsConn["CloudWatch Logs<br/>/ecs/opencti/connectors/*"]
@@ -101,7 +101,7 @@ flowchart TB
 | 色 | 意味 |
 |---|---|
 | 青（実線） | Core スタックのコンピュート（EC2 / ECS） |
-| 青（破線） | Connector スタックのリソース（`opencti-connector.yaml`、×1〜5） |
+| 青（破線） | ImportFileStix Connectorスタックのリソース（`opencti-connector-import-file-stix.yaml`） |
 | 紫 | マネージド依存サービス（OpenSearch / Redis / Amazon MQ） |
 | グレー | ネットワーク基盤・S3・Secrets Manager・IAM・CloudWatch Logs |
 
